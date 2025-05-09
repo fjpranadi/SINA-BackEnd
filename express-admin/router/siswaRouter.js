@@ -1,9 +1,9 @@
 const express = require('express');
 const router = express.Router();
-const { tambahSiswa, hapusSiswa } = require('../controller/siswaController');
+const { tambahSiswa, hapusSiswa } = require('../controllers/siswaController');
 const { verifyToken } = require('../controller/authController');
 
-router.post('/tambahSiswa', tambahSiswa);
-router.delete('/hapusSiswa', hapusSiswa);
+router.post('/tambah', tambahSiswa);
+router.delete('/hapus', hapusSiswa);
 
 module.exports = router;
