@@ -24,11 +24,11 @@ const getMapelById = async (req, res) => {
 
 // CREATE mapel
 const createMapel = async (req, res) => {
-    const { nama_mapel, km } = req.body;
+    const { nama_mapel, kkm } = req.body;
     try {
         const [result] = await db.query(
             'INSERT INTO mapel (nama_mapel, kkm) VALUES (?, ?)',
-            [nama_mapel, km]
+            [nama_mapel, kkm]
         );
         res.status(201).json({ message: 'Mapel berhasil ditambahkan', mapel_id: result.insertId });
     } catch (error) {
@@ -39,11 +39,11 @@ const createMapel = async (req, res) => {
 // UPDATE mapel
 const updateMapel = async (req, res) => {
     const id = req.params.id;
-    const { nama_mapel, km } = req.body;
+    const { nama_mapel, kkm } = req.body;
     try {
         const [result] = await db.query(
             'UPDATE mapel SET nama_mapel = ?, kkm = ? WHERE mapel_id = ?',
-            [nama_mapel, km, id]
+            [nama_mapel, kkm, id]
         );
         if (result.affectedRows === 0) return res.status(404).json({ message: 'Mapel tidak ditemukan' });
         res.status(200).json({ message: 'Mapel berhasil diperbarui' });

@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const {createGuru,getAllGuru,updateGuru,getGuruByNip,deleteGuru} = require('../controller/guruController');
 const { verifyToken } = require('../controller/authController'); // ganti path jika perlu
+const upload = require('../middleware/uploadProfile'); 
 
 // Middleware untuk cek role admin
 const onlyAdmin = (req, res, next) => {
@@ -14,10 +15,10 @@ const onlyAdmin = (req, res, next) => {
 // Lindungi semua route dengan token + role admin
 router.use(verifyToken, onlyAdmin);
 
-router.post('/admin/guru', createGuru);
+router.post('/admin/guru', upload.single('foto_profile'), createGuru);
 router.get('/admin/guru', getAllGuru);
 router.get('/admin/guru/:nip', getGuruByNip);
-router.put('/admin/guru/:nip', updateGuru);
+router.put('/admin/guru/:nip', upload.single('foto_profile'), updateGuru);
 router.delete('/admin/guru/:nip', deleteGuru);
 
 module.exports = router;
