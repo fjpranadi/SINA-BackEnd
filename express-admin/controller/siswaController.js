@@ -101,7 +101,7 @@ const getSiswaByUserId = async (req, res) => {
   }
 };
 
-// UPDATE - Edit Siswa
+// UPDATE - Edit
 const updateSiswa = async (req, res) => {
   const {
     user_id, username, email, password, nis, nisn, nama, tanggal, tempat,
