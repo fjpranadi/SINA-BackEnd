@@ -26,28 +26,31 @@ const containsSQLInjection = (input) => {
 
         const user = rows[0][0];
 
-        if (!user) {
-            return res.status(401).json({ message: 'Email tidak ditemukan!' });
-        }
-
-        if (password !== user.password) {
-            return res.status(401).json({ message: 'Password salah!' });
-        }
+        if (!user || password !== user.password) {
+    	    return res.status(400).json({ message: 'Email atau Password tidak sama!' });
+	}
 
         if (user.role !== 'admin') {
             return res.status(403).json({ message: 'Hanya admin yang boleh login.' });
         }
 
         const token = jwt.sign(
-            { userId: user.user_id, email: user.email, role: user.role },
-            JWT_SECRET,
-            { expiresIn: '5h' }
-        );
+    	   { userId: user.user_id, email: user.email, role: user.role, username: user.username, foto_profil: user.foto_profil },
+           JWT_SECRET,
+           { expiresIn: '5h' }
+	);
 
         res.status(200).json({
-            message: 'Login berhasil!',
-            token: token
-        });
+    	    message: 'Login berhasil!',
+   	    token: token,
+    	    data: {
+       		 userId: user.user_id,
+        	email: user.email,
+       		 username: user.username,
+        	role: user.role,
+        	foto_profil: user.foto_profil
+   	 	}
+	});
 
     } catch (error) {
         console.error(error);
@@ -72,5 +75,101 @@ const verifyToken = (req, res, next) => {
     }
 };
 
+const editProfile = async (req, res) => {
+  const userId = req.user.userId;
+  const { username, email, password, oldpassword } = req.body; // <-- tambahkan oldPassword di sini
+  const file = req.file;
+  console.log(req.file);
 
-module.exports = { login, verifyToken };
+
+  try {
+    const [existing] = await db.query('SELECT * FROM user WHERE user_id = ?', [userId]);
+    if (existing.length === 0) {
+      return res.status(404).json({ message: 'User tidak ditemukan' });
+    }
+
+    const user = existing[0]; // <-- tambahkan ini untuk mendefinisikan user
+
+    const updateFields = [];
+    const updateValues = [];
+
+    if (username) {
+      updateFields.push('username = ?');
+      updateValues.push(username);
+    }
+
+    if (email) {
+      updateFields.push('email = ?');
+      updateValues.push(email);
+    }
+
+    if (password) {
+      if (!oldpassword) {
+        return res.status(400).json({ message: 'Password lama wajib diisi untuk mengganti password!' });
+      }
+
+      if (oldpassword !== user.password) {
+        return res.status(400).json({ message: 'Password lama tidak cocok!' });
+      }
+
+      updateFields.push('password = ?');
+      updateValues.push(password);
+    }
+
+    updateValues.push(userId);
+
+    if (updateFields.length > 0) {
+      await db.query(`UPDATE user SET ${updateFields.join(', ')} WHERE user_id = ?`, updateValues);
+    }
+
+    if (file) {
+      await db.query('UPDATE admin SET foto_profil = ? WHERE user_id = ?', [file.originalname, userId]);
+    }
+    
+
+    res.status(200).json({ message: 'Profil berhasil diperbarui!' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Terjadi kesalahan server' });
+  }
+};
+
+
+const getProfile = async (req, res) => {
+    const userId = req.user.userId;  // Ambil userId dari decoded token
+    console.log('Request body:', req.body);  // Tambahkan log ini
+    console.log('Request file:', req.file);  // Log file upload
+
+    try {
+        // Ambil data user dan foto profil admin dari tabel user dan admin
+        const [rows] = await db.query(`
+            SELECT 
+                u.username, 
+                u.email, 
+                CONCAT('http://localhost:3000/Upload/profile_image/', a.foto_profil) AS foto_profil
+            FROM user u
+            JOIN admin a ON u.user_id = a.user_id
+            WHERE u.user_id = ?`, [userId]);
+
+        if (rows.length === 0) {
+            return res.status(404).json({ message: 'Pengguna tidak ditemukan!' });
+        }
+
+        const user = rows[0];
+
+        // Kembalikan data profil
+        res.status(200).json({
+            message: 'Data profil berhasil diambil!',
+            data: {
+                username: user.username,
+                email: user.email, 
+                foto_profil: user.foto_profil
+            }
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: 'Terjadi kesalahan pada server' });
+    }
+};
+
+module.exports = { login, verifyToken, editProfile, getProfile };
