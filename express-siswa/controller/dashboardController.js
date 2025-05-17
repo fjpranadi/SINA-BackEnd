@@ -225,6 +225,7 @@ const getTugasSiswa = async (req, res) => {
          t.judul,
          t.deskripsi,
          t.lampiran,
+         t.uraian,
          t.tenggat_kumpul,
          t.tanggal_pengumpulan,
          t.nilai
@@ -251,8 +252,52 @@ const getTugasSiswa = async (req, res) => {
   }
 };
 
+const editTugasSiswa = async (req, res) => {
+  const { tugas_id } = req.params;
+  const { uraian } = req.body;
+  const tanggal_pengumpulan = new Date(); // gunakan waktu sekarang
+
+  try {
+    // Cek apakah tugas tersedia
+    const [[tugas]] = await db.query('SELECT * FROM tugas WHERE tugas_id = ?', [tugas_id]);
+    if (!tugas) {
+      return res.status(404).json({ message: 'Tugas tidak ditemukan' });
+    }
+
+    let lampiran = tugas.lampiran;
+
+    // Jika ada file baru diupload
+    if (req.file) {
+      // Hapus lampiran lama jika ada
+      if (lampiran && fs.existsSync(path.join('upload/tugas', lampiran))) {
+        fs.unlinkSync(path.join('upload/tugas', lampiran));
+      }
+
+      lampiran = req.file.filename;
+    }
+
+    await db.query(`
+      UPDATE tugas 
+      SET uraian = ?, lampiran = ?, tanggal_pengumpulan = ?
+      WHERE tugas_id = ?
+    `, [uraian, lampiran, tanggal_pengumpulan, tugas_id]);
+
+    res.status(200).json({
+      message: 'Tugas berhasil dikumpulkan',
+      status: 200
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      message: 'Gagal mengumpul tugas',
+      error: err.message
+    });
+  }
+};
 
 
 
 
-module.exports = {getBiodataSiswa, getJadwalSiswa, editDataDiriSiswa, getBerita, getMateriSiswa, getTugasSiswa };
+
+module.exports = {getBiodataSiswa, getJadwalSiswa, editDataDiriSiswa, getBerita, getMateriSiswa, getTugasSiswa, editTugasSiswa };
