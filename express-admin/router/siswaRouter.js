@@ -10,6 +10,7 @@ const {
 } = require('../controller/siswaController');
 
 const { verifyToken } = require('../controller/authController');
+const upload = require('../middleware/uploadProfile'); 
 
 // Middleware untuk cek role admin
 const onlyAdmin = (req, res, next) => {
@@ -23,10 +24,10 @@ const onlyAdmin = (req, res, next) => {
 router.use(verifyToken, onlyAdmin);
 
 // Route siswa
-router.post('/admin/siswa', tambahSiswa);                      // Tambah siswa
-router.get('/admin/siswa', getAllSiswa);                       // Ambil semua siswa
-router.get('/admin/siswa/:user_id', getSiswaByUserId);         // Ambil 1 siswa by user_id
-router.put('/admin/siswa/:user_id', updateSiswa);              // Update siswa
-router.delete('/admin/siswa/:user_id', hapusSiswa);            // Hapus 
+router.post('/admin/siswa', upload.single('foto_profil'), tambahSiswa); // Tambah siswa
+router.get('/admin/siswa', getAllSiswa);                                // Ambil semua siswa
+router.get('/admin/siswa/:user_id', getSiswaByUserId);                  // Ambil 1 siswa by user_id
+router.put('/admin/siswa/:user_id', updateSiswa);                       // Update siswa
+router.delete('/admin/siswa/:user_id', hapusSiswa);                     // Hapus 
 
 module.exports = router;
