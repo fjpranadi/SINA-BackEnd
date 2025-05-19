@@ -23,7 +23,7 @@ const onlyAdmin = (req, res, next) => {
 // Lindungi semua route
 router.use(verifyToken, onlyAdmin);
 
-// Route siswa
+// Route siswaa
 router.post('/admin/siswa', upload.single('foto_profil'), tambahSiswa); // Tambah siswa
 router.get('/admin/siswa', getAllSiswa);                                // Ambil semua siswa
 router.get('/admin/siswa/:user_id', getSiswaByUserId);                  // Ambil 1 siswa by user_id

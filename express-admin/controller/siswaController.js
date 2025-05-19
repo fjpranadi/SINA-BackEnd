@@ -4,7 +4,7 @@ const bcrypt = require('bcryptjs');
 const JWT_SECRET = 'token-jwt';
 const crypto = require('crypto');
 
-// Helper untuk deteksi kata berbahaya
+// Helper untuk deteksi kata berbahayaa
 const containsSQLInjection = (input) => {
   const forbiddenWords = ['select', 'insert', 'update', 'delete', 'drop', 'alter', 'create', 'replace', 'truncate'];
   return forbiddenWords.some(word => input.toLowerCase().includes(word));
