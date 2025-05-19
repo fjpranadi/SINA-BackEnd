@@ -146,7 +146,7 @@ const getProfile = async (req, res) => {
             SELECT 
                 u.username, 
                 u.email, 
-                CONCAT('http://localhost:3000/Upload/profile_image/', a.foto_profil) AS foto_profil
+                a.foto_profil AS foto_profil
             FROM user u
             JOIN admin a ON u.user_id = a.user_id
             WHERE u.user_id = ?`, [userId]);
