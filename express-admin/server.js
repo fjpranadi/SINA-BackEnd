@@ -9,7 +9,17 @@ const siswaRouter = require('./router/siswaRouter');
 const kelasRouter = require('./router/kelasRouter');
 const tahunakademikRouter = require('./router/tahunakademikRouter');
 const jadwalRouter = require('./router/jadwalRouter');
+const adminRouter = require('./router/adminRouter')
+const beritaRouter = require('./router/beritaRouter')
+const kurikulumRouter = require('./router/kurikulumRouter')
 require('dotenv').config();
+
+const generateRandomFilename = (originalName) => {
+  const ext = path.extname(originalName); // ambil ekstensi file, misalnya .jpg
+  const randomStr = crypto.randomBytes(8).toString('hex'); // string hex random
+  const timestamp = Date.now(); // timestamp unik
+  return `${timestamp}_${randomStr}${ext}`;
+};
 
 // Public path untuk akses gambar profile
 app.use('/Upload/profile_image', express.static(path.join(__dirname, 'Upload/profile_image')));
@@ -21,16 +31,20 @@ app.use(cors({
   credentials: true
 }));
 
+app.use(express.json()); // untuk parsing application/json
+app.use(express.urlencoded({ extended: true }));
+
 app.use(express.json());
 app.use('/api', authController);
 app.use('/api', mapelRouter);
 app.use('/api', guruController);
+app.use('/api', adminRouter);
+app.use('/api', beritaRouter);
+app.use('/api', kurikulumRouter);
 app.use('/api', siswaRouter);
 app.use('/api', kelasRouter);
 app.use('/api', tahunakademikRouter);
 app.use('/api', jadwalRouter);
-
-
 
 
 const PORT = process.env.PORT || 3000;
