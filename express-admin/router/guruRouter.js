@@ -1,24 +1,15 @@
 const express = require('express');
 const router = express.Router();
 const {createGuru,getAllGuru,updateGuru,getGuruByNip,deleteGuru} = require('../controller/guruController');
-const { verifyToken } = require('../controller/authController'); // ganti path jika perlu
+const { verifyAdmin } = require('../controller/authController'); // ganti path jika perlu
 const upload = require('../middleware/uploadProfile'); 
 
 // Middleware untuk cek role admin
-const onlyAdmin = (req, res, next) => {
-    if (req.user.role !== 'admin') {
-        return res.status(403).json({ message: 'Akses ditolak. Hanya admin yang diizinkan.' });
-    }
-    next();
-};
 
-// Lindungi semua route dengan token + role admin
-router.use(verifyToken, onlyAdmin);
-
-router.post('/admin/guru', upload.single('foto_profile'), createGuru);
-router.get('/admin/guru', getAllGuru);
-router.get('/admin/guru/:nip', getGuruByNip);
-router.put('/admin/guru/:nip', upload.single('foto_profile'), updateGuru);
-router.delete('/admin/guru/:nip', deleteGuru);
+router.post('/admin/guru',verifyAdmin, upload.single('foto_profile'), createGuru);
+router.get('/admin/guru',verifyAdmin, getAllGuru);
+router.get('/admin/guru/:nip',verifyAdmin, getGuruByNip);
+router.put('/admin/guru/:nip',verifyAdmin, upload.single('foto_profile'), updateGuru);
+router.delete('/admin/guru/:nip',verifyAdmin, deleteGuru);
 
 module.exports = router;

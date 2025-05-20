@@ -2,6 +2,9 @@ const db = require('../database/db');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const JWT_SECRET = 'token-jwt'; // Ganti ini di real project
+const fs = require('fs');
+const path = require('path');
+
 
 const getBiodataSiswa = async (req, res) => {
   const userId = req.user.userId;

@@ -30,9 +30,10 @@ const containsSQLInjection = (input) => {
     	    return res.status(400).json({ message: 'Email atau Password tidak sama!' });
 	}
 
-        if (user.role !== 'admin') {
-            return res.status(403).json({ message: 'Hanya admin yang boleh login.' });
+        if (user.role !== 'admin' && user.role !== 'superadmin') {
+            return res.status(403).json({ message: 'Hanya admin dan superadmin yang boleh login.' });
         }
+
 
         const token = jwt.sign(
     	   { userId: user.user_id, email: user.email, role: user.role, username: user.username, foto_profil: user.foto_profil },
@@ -58,6 +59,24 @@ const containsSQLInjection = (input) => {
     }
 };
 
+const verifySuperAdmin = (req, res, next) => {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+
+    if (!token) return res.status(401).json({ message: 'Token tidak ditemukan!' });
+
+    try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        if (decoded.role !== 'superadmin') {
+            return res.status(403).json({ message: 'Hanya superadmin yang diizinkan mengakses fitur ini.' });
+        }
+        req.user = decoded; // simpan info user jika dibutuhkan di controller
+        next();
+    } catch (err) {
+        return res.status(403).json({ message: 'Token tidak valid!' });
+    }
+};
+
 const verifyToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1]; // ambil tokennya
@@ -75,11 +94,29 @@ const verifyToken = (req, res, next) => {
     }
 };
 
+const verifyAdmin = (req, res, next) => {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+
+    if (!token) return res.status(401).json({ message: 'Token tidak ditemukan!' });
+
+    try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        if (decoded.role !== 'admin' && decoded.role !== 'superadmin') {
+            return res.status(403).json({ message: 'Hanya admin atau superadmin yang diizinkan.' });
+        }
+        req.user = decoded;
+        next();
+    } catch (err) {
+        return res.status(403).json({ message: 'Token tidak valid!' });
+    }
+};
+
 const editProfile = async (req, res) => {
   const userId = req.user.userId;
   const { username, email, password, oldpassword } = req.body; // <-- tambahkan oldPassword di sini
   const file = req.file;
-  console.log(req.file);
+  console.log(req.file); 
 
 
   try {
@@ -172,4 +209,4 @@ const getProfile = async (req, res) => {
     }
 };
 
-module.exports = { login, verifyToken, editProfile, getProfile };
+module.exports = { login, verifyToken, editProfile, getProfile, verifySuperAdmin, verifyAdmin };
