@@ -9,7 +9,7 @@ const {
   hapusSiswa
 } = require('../controller/siswaController');
 
-const { verifyToken } = require('../controller/authController');
+const { verifyAdmin } = require('../controller/authController');
 const upload = require('../middleware/uploadProfile'); 
 
 // Middleware untuk cek role admin
