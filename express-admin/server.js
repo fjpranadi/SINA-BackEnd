@@ -5,6 +5,10 @@ const path = require('path');
 const authController = require('./router/authRouter')
 const guruController = require('./router/guruRouter')
 const mapelRouter = require('./router/mapelRouter');
+const siswaRouter = require('./router/siswaRouter');
+const kelasRouter = require('./router/kelasRouter');
+const tahunakademikRouter = require('./router/tahunakademikRouter');
+const jadwalRouter = require('./router/jadwalRouter');
 const adminRouter = require('./router/adminRouter')
 const beritaRouter = require('./router/beritaRouter')
 const kurikulumRouter = require('./router/kurikulumRouter')
@@ -37,8 +41,10 @@ app.use('/api', guruController);
 app.use('/api', adminRouter);
 app.use('/api', beritaRouter);
 app.use('/api', kurikulumRouter);
-
-
+app.use('/api', siswaRouter);
+app.use('/api', kelasRouter);
+app.use('/api', tahunakademikRouter);
+app.use('/api', jadwalRouter);
 
 
 const PORT = process.env.PORT || 3000;
