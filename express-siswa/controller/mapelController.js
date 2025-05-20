@@ -87,10 +87,10 @@ const getMapelKelas = async (req, res) => {
   }
 };
 
-// GET materi dan tugas
 const getMateri = async (req, res) => {
   try {
     const userId = req.user.userId;
+    const { mapel_id } = req.params;
 
     // Ambil NIS siswa berdasarkan userId
     const [[siswa]] = await db.query('SELECT nis FROM siswa WHERE user_id = ?', [userId]);
@@ -111,9 +111,17 @@ const getMateri = async (req, res) => {
       return res.status(404).json({ status: 404, message: 'Tidak ada mapel yang terkait dengan siswa.' });
     }
 
-    // Buat array mapel_id dan krs_id yang unik untuk query
-    const mapelIds = mapelKrsList.map(m => m.mapel_id);
-    const krsIds = mapelKrsList.map(m => m.krs_id);
+    // Filter mapel_id dari params
+    let filteredMapelKrsList = mapelKrsList;
+    if (mapel_id) {
+      filteredMapelKrsList = mapelKrsList.filter(m => m.mapel_id == mapel_id);
+      if (filteredMapelKrsList.length === 0) {
+        return res.status(404).json({ status: 404, message: 'Mapel tidak ditemukan untuk siswa ini.' });
+      }
+    }
+
+    const mapelIds = filteredMapelKrsList.map(m => m.mapel_id);
+    const krsIds = filteredMapelKrsList.map(m => m.krs_id);
 
     // Query materi yang relevan
     const [materiRows] = await db.query(`
@@ -141,9 +149,8 @@ const getMateri = async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ status: 500, message: 'Gagal mengambil data materi.' });
-  } finally {}
+  }
 };
-
 
 const getTugas = async (req, res) => {
   try {
