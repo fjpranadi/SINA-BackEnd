@@ -45,9 +45,16 @@ const containsSQLInjection = (input) => {
         );
 
         res.status(200).json({
-            message: 'Login berhasil!',
-            token: token
-        });
+    	    message: 'Login berhasil!',
+   	    token: token,
+    	    data: {
+       		 userId: user.user_id,
+        	email: user.email,
+       		 username: user.username,
+        	role: user.role,
+        	foto_profil: user.foto_profil
+   	 	}
+	});
 
     } catch (error) {
         console.error(error);

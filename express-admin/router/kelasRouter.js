@@ -6,27 +6,18 @@ const {
   getAllKelas,
   getKelasById,
   updateKelas,
-  hapusKelas
+  hapusKelas,
+  getSiswaByKelasId
 } = require('../controller/kelasController');
 
-const { verifyToken } = require('../controller/authController');
-
-// Middleware untuk cek role admin
-const onlyAdmin = (req, res, next) => {
-  if (req.user.role !== 'admin') {
-    return res.status(403).json({ message: 'Akses ditolak. Hanya admin yang diizinkan.' });
-  }
-  next();
-};
-
-// Lindungi semua route
-router.use(verifyToken, onlyAdmin);
+const { verifyAdmin } = require('../controller/authController');
 
 // Route kelas
-router.post('/admin/kelas', tambahKelas); // Tambah kelas
-router.get('/admin/kelas', getAllKelas);                                // Ambil semua kelas
-router.get('/admin/kelas/:kelas_id', getKelasById);                  // Ambil 1 kelas by kelas_id
-router.put('/admin/kelas/:kelas_id', updateKelas);                       // Update kelas
-router.delete('/admin/kelas/:kelas_id', hapusKelas);                     // Hapus 
+router.post('/admin/kelas',verifyAdmin, tambahKelas); // Tambah kelas
+router.get('/admin/kelas',verifyAdmin, getAllKelas);                                // Ambil semua kelas
+router.get('/admin/kelas/:kelas_id',verifyAdmin, getKelasById);                  // Ambil 1 kelas by kelas_id
+router.put('/admin/kelas/:kelas_id',verifyAdmin, updateKelas);                       // Update kelas
+router.delete('/admin/kelas/:kelas_id',verifyAdmin, hapusKelas);                     // Hapus
+router.get('/admin/siswa_kelas/:kelas_id',verifyAdmin, getSiswaByKelasId);  
 
 module.exports = router;

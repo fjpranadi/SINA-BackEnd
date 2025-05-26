@@ -9,7 +9,7 @@ const containsSQLInjection = (input) => {
   const forbiddenWords = ['select', 'insert', 'update', 'delete', 'drop', 'alter', 'create', 'replace', 'truncate'];
   return forbiddenWords.some(word => input.toLowerCase().includes(word));
 };
-
+ 
 // CREATE - Tambah Kelas
 const tambahKelas = async (req, res) => {
   const { tahun_akademik_id, guru_nip, nama_kelas, tingkat } = req.body;
@@ -155,10 +155,51 @@ const hapusKelas = async (req, res) => {
   }
 };
 
+// GET - Ambil semua siswa berdasarkan kelas_id
+const getSiswaByKelasId = async (req, res) => {
+  const { kelas_id } = req.params;
+
+  try {
+    const [rows] = await db.query(`
+      SELECT 
+        s.nis,
+        s.nisn,
+        s.nama_siswa,
+        s.tanggal_lahir,
+        s.tempat_lahir,
+        s.alamat,
+        s.jenis_kelamin,
+        s.agama,
+        s.no_telepon,
+        s.foto_profil,
+        s.created_at,
+        k.kelas_id,
+        krs.krs_id,
+        krs.status_pembayaran
+      FROM siswa s
+      JOIN krs ON s.nis = krs.siswa_nis
+      JOIN kelas k ON krs.kelas_id = k.kelas_id
+      WHERE k.kelas_id = ?
+      ORDER BY s.nama_siswa ASC
+    `, [kelas_id]);
+
+    if (rows.length === 0) {
+      return res.status(404).json({ message: 'Tidak ada siswa di kelas ini atau kelas tidak ditemukan.' });
+    }
+
+    res.status(200).json(rows);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Gagal mengambil data siswa berdasarkan kelas.', error: error.message });
+  }
+};
+
+
 module.exports = {
   tambahKelas,
   getAllKelas,
   getKelasById,
   updateKelas,
-  hapusKelas
+  hapusKelas,
+  getSiswaByKelasId
 };

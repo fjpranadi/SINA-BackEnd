@@ -11,7 +11,7 @@ const tambahTahunAkademik = async (req, res) => {
   if (!kurikulum_id || !nama_kurikulum || !tahun_mulai || !tahun_berakhir || !status) {
     return res.status(400).json({ message: 'Semua field wajib diisi!' });
   }
-
+ 
   try {
     const [kurikulum] = await db.query(`SELECT * FROM kurikulum WHERE kurikulum_id = ?`, [kurikulum_id]);
 

@@ -21,13 +21,24 @@ const generateRandomPassword = () => {
   return password;
 };
 
+// Helper untuk generate username dari nama_guru
+const generateUsernameFromName = (name) => {
+  const base = name.toLowerCase().replace(/[^a-z]/g, ''); // Hanya huruf a-z
+  const randomNumber = Math.floor(100 + Math.random() * 900); // Tambah angka 100-999
+  return base + randomNumber;
+};
+
+
 // CREATE - Tambah Guru + User
 const createGuru = async (req, res) => {
   const {
     nip, nama_guru, alamat, no_telepon, agama_guru,
     jenis_kelamin_guru, tanggal_lahir_guru, tempat_lahir_guru,
-    username, email
+    email
   } = req.body;
+
+  const username = generateUsernameFromName(nama_guru);
+
 
   const foto_profile = req.file ? req.file.filename : null;
   const plainPassword = generateRandomPassword(); // 6 karakter hex random
@@ -47,7 +58,7 @@ const createGuru = async (req, res) => {
       [nip, user_id, nama_guru, alamat, no_telepon, agama_guru, jenis_kelamin_guru, tanggal_lahir_guru, tempat_lahir_guru, foto_profile]
     );
 
-    res.status(200).json({ message: 'Guru berhasil ditambahkan', password: plainPassword });
+    res.status(200).json({ message: 'Guru berhasil ditambahkan'});
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Gagal menambahkan guru', error: error.message });
@@ -72,7 +83,7 @@ const getGuruByNip = async (req, res) => {
   try {
     const [rows] = await db.query(
       `SELECT g.*, u.username, u.email, 
-              CONCAT('http://sina.pnb.ac.id:3000/Upload/profile_image/', g.foto_profil) AS foto_profil 
+              g.foto_profil AS foto_profil 
        FROM guru g 
        JOIN user u ON g.user_id = u.user_id 
        WHERE g.nip = ?`, 
@@ -85,44 +96,6 @@ const getGuruByNip = async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Gagal mengambil data guru.' });
-  }
-};
-
-
-// UPDATE - Edit Guru
-const updateGuru = async (req, res) => {
-  const { nip } = req.params;
-  const {
-    nama_guru, alamat, no_telepon, agama_guru,
-    jenis_kelamin_guru, tanggal_lahir_guru, tempat_lahir_guru
-  } = req.body;
-
-  const foto_profile = req.file ? req.file.filename : null;
-
-  try {
-    const fields = [
-      nama_guru, alamat, no_telepon, agama_guru,
-      jenis_kelamin_guru, tanggal_lahir_guru, tempat_lahir_guru
-    ];
-    let sql = `UPDATE guru SET 
-      nama_guru = ?, alamat = ?, no_telepon = ?, agama_guru = ?, 
-      jenis_kelamin_guru = ?, tanggal_lahir_guru = ?, tempat_lahir_guru = ?`;
-
-    if (foto_profile) {
-      sql += `, foto_profile = ?`;
-      fields.push(foto_profile);
-    }
-
-    sql += ` WHERE nip = ?`;
-    fields.push(nip);
-
-    const [result] = await db.query(sql, fields);
-
-    if (result.affectedRows === 0) return res.status(404).json({ message: 'Guru tidak ditemukan.' });
-    res.json({ message: 'Guru berhasil diperbarui.' });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'Gagal memperbarui data guru.' });
   }
 };
 
@@ -147,4 +120,78 @@ const deleteGuru = async (req, res) => {
   }
 };
 
-module.exports = { createGuru,deleteGuru,getAllGuru,getGuruByNip,updateGuru };
+// UPDATE - Perbarui data Guru
+const updateGuru = async (req, res) => {
+  const { nip } = req.params;
+  const {
+    nama_guru, alamat, no_telepon, agama_guru,
+    jenis_kelamin_guru, tanggal_lahir_guru, tempat_lahir_guru,
+    email
+  } = req.body;
+
+  const foto_profile = req.file ? req.file.filename : null;
+
+  try {
+    // Ambil data lama
+    const [existingRows] = await db.query(
+      `SELECT g.*, u.email 
+       FROM guru g 
+       JOIN user u ON g.user_id = u.user_id 
+       WHERE g.nip = ?`, 
+      [nip]
+    );
+
+    if (existingRows.length === 0) {
+      return res.status(404).json({ message: 'Guru tidak ditemukan.' });
+    }
+
+    const oldData = existingRows[0];
+
+    // Perbarui tabel user (email saja)
+    await db.query(
+      `UPDATE user SET email = ? WHERE user_id = ?`,
+      [email || oldData.email, oldData.user_id]
+    );
+
+    // Perbarui tabel guru
+    await db.query(
+      `UPDATE guru SET 
+        nama_guru = ?, 
+        alamat = ?, 
+        no_telepon = ?, 
+        agama_guru = ?, 
+        jenis_kelamin_guru = ?, 
+        tanggal_lahir_guru = ?, 
+        tempat_lahir_guru = ?, 
+        foto_profil = ?
+      WHERE nip = ?`,
+      [
+        nama_guru || oldData.nama_guru,
+        alamat || oldData.alamat,
+        no_telepon || oldData.no_telepon,
+        agama_guru || oldData.agama_guru,
+        jenis_kelamin_guru || oldData.jenis_kelamin_guru,
+        tanggal_lahir_guru || oldData.tanggal_lahir_guru,
+        tempat_lahir_guru || oldData.tempat_lahir_guru,
+        foto_profile || oldData.foto_profil,
+        nip
+      ]
+    );
+
+    res.json({ message: 'Data guru berhasil diperbarui.' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Gagal memperbarui data guru.' });
+  }
+};
+
+module.exports = {
+  createGuru,
+  deleteGuru,
+  getAllGuru,
+  getGuruByNip,
+  updateGuru // <- tambahkan ini
+};
+
+
+module.exports = { createGuru,deleteGuru,getAllGuru,getGuruByNip, updateGuru };

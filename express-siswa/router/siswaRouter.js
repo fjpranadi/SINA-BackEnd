@@ -4,25 +4,27 @@ const upload = require('../middleware/uploadMiddleware');
 const { verifyToken } = require('../controller/authController');
 const { getMateri, getTugas, getMapelKelas, getJumlahTugasMateri, getTugasDetail, getMateriDetail} = require('../controller/mapelController');
 const { getAbsensi, getRingkasanAbsensi} = require('../controller/absensiController');
-const { getBiodataSiswa, getJadwalSiswa, editDataDiriSiswa, getBerita, getMateriSiswa, getTugasSiswa, editTugasSiswa } = require('../controller/dashboardController');
+const { getBiodataSiswa, getJadwalSiswa, editDataDiriSiswa, getBerita, getMateriSiswa, getTugasSiswa, editTugasSiswa, getBeritaById, getDashboardRingkasanSiswa } = require('../controller/dashboardController');
 const uploadtugas = require('../middleware/uploadtugasMiddleware'); 
+const uploadprofile = require('../middleware/uploadProfile'); 
 
 router.get('/dashboard/biodata', verifyToken, getBiodataSiswa);
+router.get('/dashboard', verifyToken, getDashboardRingkasanSiswa);
 router.get('/dashboard/jadwal', verifyToken, getJadwalSiswa);
-router.put('/dashboard/biodata', verifyToken, editDataDiriSiswa);
+router.put('/dashboard/biodata', verifyToken,uploadprofile.single('foto_profil'), editDataDiriSiswa);
 router.get('/dashboard/berita', verifyToken, getBerita);
+router.get('/dashboard/berita/:id', verifyToken, getBeritaById);
 router.get('/dashboard/materi/:jadwal_id', verifyToken, getMateriSiswa);
 router.get('/dashboard/tugas/:jadwal_id', verifyToken, getTugasSiswa);
-router.put('/dashboard/tugas/:tugas_id', uploadtugas.single('lampiran'), verifyToken, editTugasSiswa);
+router.put('/dashboard/tugas/:tugas_id', uploadtugas.single('file_jawaban'), verifyToken, editTugasSiswa);
 
 // Mapel
 router.get('/dashboard/mapel-kelas', verifyToken, getMapelKelas);
 router.get('/dashboard/jumlahTugasMateri', verifyToken, getJumlahTugasMateri);
 
-
 // Mapel Detail
-router.get('/dashboard/materi', verifyToken, getMateri);
-router.get('/dashboard/tugas', verifyToken, getTugas);
+router.get('/dashboard/materi/:mapel_id', verifyToken, getMateri);
+router.get('/dashboard/tugas/:mapel_id', verifyToken, getTugas);
 
 // Tugas & Materi Detail routes
 router.get('/dashboard/materiDetail/:materi_id', verifyToken, getMateriDetail);
