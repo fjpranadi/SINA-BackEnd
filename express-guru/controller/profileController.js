@@ -22,13 +22,15 @@ const updateProfileGuru = async (req, res) => {
   try {
     const userId = req.user.userId;
 
-    // Ambil data lama
     const [[oldData]] = await db.query('SELECT * FROM guru WHERE user_id = ?', [userId]);
     if (!oldData) {
       return res.status(404).json({ status: 404, message: 'Guru tidak ditemukan.' });
     }
 
-    // Pakai data baru jika ada, jika tidak pakai data lama
+    // Debug log
+    console.log("BODY:", req.body);
+    console.log("FILE:", req.file);
+
     const {
       nama_guru = oldData.nama_guru,
       alamat = oldData.alamat,
@@ -36,9 +38,10 @@ const updateProfileGuru = async (req, res) => {
       agama_guru = oldData.agama_guru,
       tempat_lahir_guru = oldData.tempat_lahir_guru,
       jenis_kelamin_guru = oldData.jenis_kelamin_guru,
-      tanggal_lahir_guru = oldData.tanggal_lahir_guru,
-      foto_profil = oldData.foto_profil
+      tanggal_lahir_guru = oldData.tanggal_lahir_guru
     } = req.body;
+
+    const foto_profil = req.file ? req.file.filename : oldData.foto_profil;
 
     await db.query(
       `UPDATE guru SET 
@@ -66,8 +69,8 @@ const updateProfileGuru = async (req, res) => {
 
     res.status(200).json({ status: 200, message: 'Profil guru berhasil diperbarui.' });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ status: 500, message: 'Gagal memperbarui profil guru.' });
-  }
+    console.error("ERROR UPDATE PROFILE:", err);
+    res.status(500).json({ status: 500, message: 'Gagal memperbarui profil guru.' });
+  }
 };
 module.exports = { getProfileGuru, updateProfileGuru };
