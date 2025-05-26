@@ -25,6 +25,7 @@ const getBiodataSiswa = async (req, res) => {
         nama: siswa.nama_siswa,
         tempat_lahir: siswa.tempat_lahir,
         tanggal_lahir: siswa.tanggal_lahir,
+        foto_profil: siswa.foto_profil,
         alamat: siswa.alamat,
         kelas: siswa.nama_kelas,
         tahun_akademik: siswa.tahun_akademik_id,
@@ -75,28 +76,37 @@ const getJadwalSiswa = async (req, res) => {
 
 
 const editDataDiriSiswa = async (req, res) => {
-  const userId = req.user.userId; // Ambil user ID dari token
+  const userId = req.user.userId;
   const { nama, tempat_lahir, tanggal_lahir, alamat } = req.body;
+  const fotoBaru = req.file ? req.file.filename : null;
 
   try {
-    // Cari siswa berdasarkan user_id
     const [[siswa]] = await db.query('SELECT * FROM siswa WHERE user_id = ?', [userId]);
 
     if (!siswa) {
       return res.status(404).json({ message: 'Siswa tidak ditemukan' });
     }
 
-    // Update biodata siswa
+    const foto_profil = fotoBaru ? fotoBaru : siswa.foto_profil;
+
+    if (fotoBaru && siswa.foto_profil && siswa.foto_profil !== fotoBaru) {
+      const pathLama = path.join(__dirname, '../Upload/profile_image', siswa.foto_profil);
+      if (fs.existsSync(pathLama)) {
+        fs.unlinkSync(pathLama); // Hapus file lama
+      }
+    }
+
     await db.query(
       `UPDATE siswa 
-       SET nama_siswa = ?, tempat_lahir = ?, tanggal_lahir = ?, alamat = ? 
+       SET nama_siswa = ?, tempat_lahir = ?, tanggal_lahir = ?, alamat = ?, foto_profil = ?
        WHERE user_id = ?`,
-      [nama, tempat_lahir, tanggal_lahir, alamat, userId]
+      [nama, tempat_lahir, tanggal_lahir, alamat, foto_profil, userId]
     );
 
     res.status(200).json({
       message: `Biodata siswa dengan user ID ${userId} berhasil diperbarui`,
-      status: 200
+      status: 200,
+      updatedFoto: foto_profil
     });
 
   } catch (err) {
@@ -107,6 +117,7 @@ const editDataDiriSiswa = async (req, res) => {
     });
   }
 };
+
 
 const getBerita = async (req, res) => {
   try {
@@ -132,6 +143,49 @@ const getBerita = async (req, res) => {
       message: "Data berita berhasil diambil",
       status: 200,
       data: results
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      message: "Gagal mengambil data berita",
+      error: err.message
+    });
+  }
+};
+
+const getBeritaById = async (req, res) => {
+  const { id } = req.params; // ambil ID dari URL parameter
+
+  try {
+    const [results] = await db.query(`
+      SELECT 
+        b.berita_id, 
+        b.judul, 
+        b.foto, 
+        b.isi, 
+        b.tipe,
+        b.created_at,
+        g.nama_guru,
+        u.username AS nama_admin
+      FROM berita b
+      LEFT JOIN guru g ON b.guru_nip = g.nip
+      LEFT JOIN admin a ON b.admin_id = a.admin_id
+      LEFT JOIN user u ON a.user_id = u.user_id
+      WHERE b.berita_id = ?
+      LIMIT 1;
+    `, [id]);
+
+    if (results.length === 0) {
+      return res.status(404).json({
+        message: "Berita tidak ditemukan",
+        status: 404
+      });
+    }
+
+    res.status(200).json({
+      message: "Data berita berhasil diambil",
+      status: 200,
+      data: results[0]
     });
   } catch (err) {
     console.error(err);
@@ -267,23 +321,22 @@ const editTugasSiswa = async (req, res) => {
       return res.status(404).json({ message: 'Tugas tidak ditemukan' });
     }
 
-    let lampiran = tugas.lampiran;
+    let file_jawaban = tugas.file_jawaban;
 
     // Jika ada file baru diupload
     if (req.file) {
-      // Hapus lampiran lama jika ada
-      if (lampiran && fs.existsSync(path.join('upload/tugas', lampiran))) {
-        fs.unlinkSync(path.join('upload/tugas', lampiran));
+      if (file_jawaban && fs.existsSync(path.join('upload/tugas', file_jawaban))) {
+        fs.unlinkSync(path.join('upload/tugas', file_jawaban));
       }
 
-      lampiran = req.file.filename;
+      file_jawaban = req.file.filename;
     }
 
     await db.query(`
       UPDATE tugas 
-      SET uraian = ?, lampiran = ?, tanggal_pengumpulan = ?
+      SET uraian = ?, file_jawaban = ?, tanggal_pengumpulan = ?
       WHERE tugas_id = ?
-    `, [uraian, lampiran, tanggal_pengumpulan, tugas_id]);
+    `, [uraian, file_jawaban, tanggal_pengumpulan, tugas_id]);
 
     res.status(200).json({
       message: 'Tugas berhasil dikumpulkan',
@@ -299,8 +352,67 @@ const editTugasSiswa = async (req, res) => {
   }
 };
 
+const getDashboardRingkasanSiswa = async (req, res) => {
+  const userId = req.user.userId;
+
+  try {
+    // 1. Ambil NIS siswa
+    const [[siswa]] = await db.query('SELECT nis FROM siswa WHERE user_id = ?', [userId]);
+    if (!siswa) {
+      return res.status(404).json({ message: 'Data siswa tidak ditemukan' });
+    }
+
+    // 2. Ambil krs_id dan kelas_id
+    const [[krs]] = await db.query('SELECT krs_id, kelas_id FROM krs WHERE siswa_nis = ? LIMIT 1', [siswa.nis]);
+    if (!krs) {
+      return res.status(404).json({ message: 'KRS tidak ditemukan' });
+    }
+
+    // 3. Tugas belum dikerjakan (tanggal_pengumpulan IS NULL)
+    const [[belumDikerjakan]] = await db.query(`
+      SELECT COUNT(*) AS total
+      FROM tugas
+      WHERE krs_id = ?
+        AND tanggal_pengumpulan IS NULL
+    `, [krs.krs_id]);
+
+    // 4. Tugas terlambat (tanggal_pengumpulan > tenggat_kumpul)
+    const [[terlambat]] = await db.query(`
+      SELECT COUNT(*) AS total
+      FROM tugas
+      WHERE krs_id = ?
+        AND tanggal_pengumpulan IS NOT NULL
+        AND tanggal_pengumpulan > tenggat_kumpul
+    `, [krs.krs_id]);
+
+    // 5. Absensi tidak hadir (izin, sakit, alpha)
+    const [[absensi]] = await db.query(`
+      SELECT 
+        SUM(keterangan = 'i' OR keterangan = 's' OR keterangan = 'a') AS tidak_hadir
+      FROM absensi
+      WHERE krs_id = ?
+    `, [krs.krs_id]);
 
 
+    // Kirim response
+    res.status(200).json({
+      status: 200,
+      data: {
+        tugas_belum_dikerjakan: belumDikerjakan.total || 0,
+        tugas_terlambat: terlambat.total || 0,
+        absensi_tidak_hadir: absensi.tidak_hadir || 0,
+      }
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      status: 500,
+      message: 'Gagal mengambil ringkasan dashboard',
+      error: err.message
+    });
+  }
+};
 
 
-module.exports = {getBiodataSiswa, getJadwalSiswa, editDataDiriSiswa, getBerita, getMateriSiswa, getTugasSiswa, editTugasSiswa };
+module.exports = {getBiodataSiswa, getJadwalSiswa, editDataDiriSiswa, getBerita, getMateriSiswa, getTugasSiswa, editTugasSiswa, getBeritaById, getDashboardRingkasanSiswa };

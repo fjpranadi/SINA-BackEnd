@@ -1,19 +1,10 @@
 const express = require('express');
 const app = express();
-const siswaRouter = require('./router/siswaRouter');
-const kurikulumController = require('./router/kurikulumRouter');
-const ortuRouter = require('./router/ortu');
-const authController = require('./router/authRouters')
+const guruRouter = require('./router/guruRouter');
 require('dotenv').config();
 
 app.use(express.json());
-app.use('/api', siswaRouter);
-app.use('/api', kurikulumController);
-app.use('/api', ortuRouter);
-app.use('/api', authController);
-
-
-
+app.use('/api', guruRouter);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
