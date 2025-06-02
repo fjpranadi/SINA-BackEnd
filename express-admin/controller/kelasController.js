@@ -1,8 +1,10 @@
 const db = require('../database/db');
-const jwt = require('jsonwebtoken'); // Tidak digunakan di kode ini
-const bcrypt = require('bcryptjs'); // Tidak digunakan di kode ini
-const crypto = require('crypto'); // Tidak digunakan di kode ini
-const JWT_SECRET = 'token-jwt'; // Tidak digunakan di kode ini
+const { v4: uuidv4 } = require('uuid'); // Diperlukan untuk generate kelas_id
+
+// const jwt = require('jsonwebtoken'); // Tidak digunakan di kode ini
+// const bcrypt = require('bcryptjs'); // Tidak digunakan di kode ini
+// const crypto = require('crypto'); // Tidak digunakan di kode ini
+// const JWT_SECRET = 'token-jwt'; // Tidak digunakan di kode ini
 
 // Helper SQL Injection sederhana
 const containsSQLInjection = (input) => {
@@ -16,20 +18,24 @@ const containsSQLInjection = (input) => {
 
 // CREATE - Tambah Kelas
 const tambahKelas = async (req, res) => {
-  // Ambil jenjang dari req.body
-  const { tahun_akademik_id, guru_nip, nama_kelas, tingkat, jenjang } = req.body;
+  const { tahun_akademik_id, kurikulum_id, guru_nip, nama_kelas, tingkat, jenjang } = req.body;
 
-  // Tambahkan jenjang ke validasi field wajib
-  if (!tahun_akademik_id || !guru_nip || !nama_kelas || !tingkat || !jenjang) {
-    return res.status(400).json({ message: 'Semua field (termasuk jenjang) wajib diisi!' });
+  if (!tahun_akademik_id || !kurikulum_id || !guru_nip || !nama_kelas || !tingkat || !jenjang) {
+    return res.status(400).json({ message: 'Semua field (tahun_akademik_id, kurikulum_id, guru_nip, nama_kelas, tingkat, jenjang) wajib diisi!' });
   }
 
-  // Tambahkan jenjang ke pemeriksaan SQL Injection
-  const inputFields = [guru_nip, nama_kelas, tingkat.toString(), jenjang];
+  const inputFields = [guru_nip, nama_kelas, jenjang]; 
   for (let field of inputFields) {
     if (containsSQLInjection(field)) {
       return res.status(400).json({ message: 'Input mengandung kata terlarang (potensi SQL Injection).' });
     }
+  }
+  if (typeof tingkat !== 'string' && typeof tingkat !== 'number') {
+    return res.status(400).json({ message: 'Tingkat harus berupa string atau angka.' });
+  }
+  const tingkatStr = tingkat.toString();
+  if (containsSQLInjection(tingkatStr)) {
+      return res.status(400).json({ message: 'Input tingkat mengandung kata terlarang (potensi SQL Injection).' });
   }
 
   try {
@@ -39,14 +45,17 @@ const tambahKelas = async (req, res) => {
       return res.status(404).json({ message: 'Guru dengan NIP tersebut tidak ditemukan.' });
     }
 
-    // Tambahkan jenjang ke query INSERT
+    // Generate kelas_id menggunakan UUID
+    const kelas_id_baru = uuidv4();
+
+    // Panggil stored procedure admin_create_kelas dengan kelas_id yang di-generate
+    // SP yang baru membutuhkan kelas_id sebagai parameter input.
     await db.query(
-      `INSERT INTO kelas (tahun_akademik_id, guru_nip, nama_kelas, tingkat, jenjang, created_at)
-       VALUES (?, ?, ?, ?, ?, NOW())`,
-      [tahun_akademik_id, guru_nip, nama_kelas, tingkat, jenjang]
+      'CALL admin_create_kelas(?, ?, ?, ?, ?, ?, ?)', // Sekarang 7 parameter
+      [kelas_id_baru, tahun_akademik_id, kurikulum_id, guru_nip, jenjang, nama_kelas, tingkatStr]
     );
 
-    res.status(201).json({ message: 'Kelas berhasil ditambahkan.' });
+    res.status(201).json({ message: 'Kelas berhasil ditambahkan.', kelas_id: kelas_id_baru });
 
   } catch (error) {
     console.error(error);
@@ -57,30 +66,19 @@ const tambahKelas = async (req, res) => {
 // READ - Ambil Semua Kelas
 const getAllKelas = async (req, res) => {
   try {
-    // Tambahkan k.jenjang ke query SELECT
-    const [rows] = await db.query(`
-      SELECT 
-        k.kelas_id,
-        k.nama_kelas,
-        k.tingkat,
-        k.jenjang, 
-        g.nama_guru AS wali_kelas,
-        CONCAT(
-          DATE_FORMAT(t.tahun_mulai, '%d %M %Y'), 
-          ' sampai ', 
-          DATE_FORMAT(t.tahun_berakhir, '%d %M %Y')
-        ) AS tahun_akademik,
-        DATE_FORMAT(k.created_at, '%d %M %Y') AS tanggal_dibuat
-      FROM kelas k
-      JOIN guru g ON k.guru_nip = g.nip
-      JOIN tahun_akademik t ON k.tahun_akademik_id = t.tahun_akademik_id
-      ORDER BY t.created_at DESC, k.jenjang, k.tingkat, k.nama_kelas
-    `);
+    // Panggil stored procedure admin_read_kelas dengan NULL untuk target_kelas_id dan tahun_akademik_id
+    const [rows] = await db.query('CALL admin_read_kelas(NULL, NULL)');
+    
+    // rows[0] berisi data mentah dari stored procedure
+    // Stored procedure admin_read_kelas mengembalikan:
+    // k.kelas_id, k.nama_kelas, k.tingkat, g.nama_guru, k.jenjang, 
+    // t.tahun_mulai, t.tahun_berakhir, k.created_at
+    const kelasData = rows[0];
 
-    res.status(200).json(rows);
+    res.status(200).json(kelasData); // Mengembalikan data mentah dari SP
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: 'Gagal mengambil data kelas.' });
+    res.status(500).json({ message: 'Gagal mengambil data kelas.', error: err.message });
   }
 };
 
@@ -89,32 +87,19 @@ const getKelasById = async (req, res) => {
   const { kelas_id } = req.params;
 
   try {
-    // Tambahkan k.jenjang ke query SELECT
-    const [rows] = await db.query(`
-      SELECT 
-        k.kelas_id,
-        k.nama_kelas,
-        k.tingkat,
-        k.jenjang,
-        g.nama_guru AS wali_kelas,
-        CONCAT(
-          DATE_FORMAT(t.tahun_mulai, '%d %M %Y'), 
-          ' sampai ', 
-          DATE_FORMAT(t.tahun_berakhir, '%d %M %Y')
-        ) AS tahun_akademik,
-        DATE_FORMAT(k.created_at, '%d %M %Y') AS tanggal_dibuat
-      FROM kelas k
-      JOIN guru g ON k.guru_nip = g.nip
-      JOIN tahun_akademik t ON k.tahun_akademik_id = t.tahun_akademik_id
-      WHERE k.kelas_id = ?
-      ORDER BY k.created_at DESC
-    `, [kelas_id]);
+    // Panggil stored procedure admin_read_kelas dengan kelas_id dan NULL untuk tahun_akademik_id
+    const [rows] = await db.query('CALL admin_read_kelas(?, NULL)', [kelas_id]);
+    const kelasData = rows[0]; 
 
-    if (rows.length === 0) {
-      return res.status(404).json({ message: 'Kelas tidak ditemukan.' }); // Pesan error lebih spesifik
+    if (kelasData.length === 0) {
+      return res.status(404).json({ message: 'Kelas tidak ditemukan.' });
     }
 
-    res.status(200).json(rows[0]); // Kembalikan objek tunggal, bukan array
+    // Mengembalikan data mentah objek pertama dari SP
+    // Stored procedure admin_read_kelas mengembalikan:
+    // k.kelas_id, k.nama_kelas, k.tingkat, g.nama_guru, k.jenjang, 
+    // t.tahun_mulai, t.tahun_berakhir, k.created_at
+    res.status(200).json(kelasData[0]);
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Gagal mengambil data kelas.', error: err.message });
@@ -124,41 +109,45 @@ const getKelasById = async (req, res) => {
 // UPDATE - Edit Kelas
 const updateKelas = async (req, res) => {
   const { kelas_id } = req.params;
-  // Ambil jenjang dari req.body
-  const { tahun_akademik_id, guru_nip, nama_kelas, tingkat, jenjang } = req.body;
+  const { tahun_akademik_id, kurikulum_id, guru_nip, nama_kelas, tingkat, jenjang } = req.body;
 
-  // Tambahkan jenjang ke validasi field wajib
-  if (!tahun_akademik_id || !guru_nip || !nama_kelas || !tingkat || !jenjang) {
-    return res.status(400).json({ message: 'Semua field (termasuk jenjang) wajib diisi!' });
+  if (!tahun_akademik_id || !kurikulum_id || !guru_nip || !nama_kelas || !tingkat || !jenjang) {
+    return res.status(400).json({ message: 'Semua field (tahun_akademik_id, kurikulum_id, guru_nip, nama_kelas, tingkat, jenjang) wajib diisi untuk update!' });
   }
   
-  // Tambahkan jenjang ke pemeriksaan SQL Injection
-  const inputFields = [guru_nip, nama_kelas, tingkat.toString(), jenjang];
+  const inputFields = [guru_nip, nama_kelas, jenjang];
+    if (typeof tingkat !== 'string' && typeof tingkat !== 'number') {
+    return res.status(400).json({ message: 'Tingkat harus berupa string atau angka.' });
+  }
+  const tingkatStr = tingkat.toString();
+
   for (let field of inputFields) {
     if (containsSQLInjection(field)) {
       return res.status(400).json({ message: 'Input mengandung kata terlarang (potensi SQL Injection).' });
     }
   }
+  if (containsSQLInjection(tingkatStr)) {
+      return res.status(400).json({ message: 'Input tingkat mengandung kata terlarang (potensi SQL Injection).' });
+  }
 
   try {
-    const [kelasExist] = await db.query(`SELECT * FROM kelas WHERE kelas_id = ?`, [kelas_id]);
-    if (kelasExist.length === 0) {
+    // Cek apakah kelas ada (menggunakan SP admin_read_kelas dengan parameter kedua NULL)
+    const [kelasExistResult] = await db.query('CALL admin_read_kelas(?, NULL)', [kelas_id]);
+    if (kelasExistResult[0].length === 0) {
       return res.status(404).json({ message: 'Kelas tidak ditemukan.' });
     }
     
-    // Validasi guru_nip jika diubah
-    if (guru_nip && guru_nip !== kelasExist[0].guru_nip) {
+    // const kelasSaatIni = kelasExistResult[0][0]; // Tidak digunakan jika validasi NIP disederhanakan
+    if (guru_nip) { 
         const [guruRows] = await db.query('SELECT * FROM guru WHERE nip = ?', [guru_nip]);
         if (guruRows.length === 0) {
-          return res.status(404).json({ message: 'Guru dengan NIP tersebut tidak ditemukan.' });
+          return res.status(404).json({ message: 'Guru dengan NIP baru tersebut tidak ditemukan.' });
         }
     }
 
-
-    // Tambahkan jenjang ke query UPDATE
     await db.query(
-      `UPDATE kelas SET tahun_akademik_id = ?, guru_nip = ?, nama_kelas = ?, tingkat = ?, jenjang = ? WHERE kelas_id = ?`,
-      [tahun_akademik_id, guru_nip, nama_kelas, tingkat, jenjang, kelas_id]
+      'CALL admin_update_kelas(?, ?, ?, ?, ?, ?, ?)',
+      [kelas_id, tahun_akademik_id, kurikulum_id, guru_nip, jenjang, nama_kelas, tingkatStr]
     );
 
     res.status(200).json({ message: 'Data kelas berhasil diupdate.' });
@@ -173,17 +162,19 @@ const hapusKelas = async (req, res) => {
   const { kelas_id } = req.params;
 
   try {
-    const [rows] = await db.query(`SELECT * FROM kelas WHERE kelas_id = ?`, [kelas_id]);
-
-    if (rows.length === 0) return res.status(404).json({ message: 'Kelas tidak ditemukan.' });
-
-    // Tambahan: Periksa apakah ada siswa yang terdaftar di kelas ini sebelum menghapus
-    const [siswaDiKelas] = await db.query(`SELECT COUNT(*) AS jumlah_siswa FROM krs WHERE kelas_id = ?`, [kelas_id]);
-    if (siswaDiKelas[0].jumlah_siswa > 0) {
-        return res.status(400).json({ message: `Tidak dapat menghapus kelas karena masih ada ${siswaDiKelas[0].jumlah_siswa} siswa terdaftar di kelas ini.` });
+    const [kelasExistResult] = await db.query('CALL admin_read_kelas(?, NULL)', [kelas_id]);
+    if (kelasExistResult[0].length === 0) {
+        return res.status(404).json({ message: 'Kelas tidak ditemukan.' });
     }
 
-    await db.query(`DELETE FROM kelas WHERE kelas_id = ?`, [kelas_id]);
+    const [siswaDiKelasResult] = await db.query(`CALL sp_read_siswa_from_kelas(?)`, [kelas_id]);
+    const siswaDiKelas = siswaDiKelasResult[0];
+
+    if (siswaDiKelas.length > 0) {
+      return res.status(400).json({ message: `Tidak dapat menghapus kelas karena masih ada ${siswaDiKelas.length} siswa terdaftar di kelas ini.` });
+    }
+
+    await db.query('CALL admin_delete_kelas(?)', [kelas_id]);
 
     res.status(200).json({ message: 'Kelas berhasil dihapus.' });
   } catch (error) {
@@ -197,43 +188,31 @@ const getSiswaByKelasId = async (req, res) => {
   const { kelas_id } = req.params;
 
   try {
-    const [kelasExist] = await db.query('SELECT kelas_id, nama_kelas, jenjang, tingkat FROM kelas WHERE kelas_id = ?', [kelas_id]);
-    if (kelasExist.length === 0) {
-        return res.status(404).json({ message: 'Kelas tidak ditemukan.' });
+    const [kelasInfoResult] = await db.query('CALL admin_read_kelas(?, NULL)', [kelas_id]);
+    if (kelasInfoResult[0].length === 0) {
+      return res.status(404).json({ message: 'Kelas tidak ditemukan.' });
     }
+    // Mengembalikan data mentah info kelas dari SP admin_read_kelas
+    const kelasInfoData = kelasInfoResult[0][0]; 
 
-    const [rows] = await db.query(`
-      SELECT 
-        s.nis,
-        s.nisn,
-        s.nama_siswa,
-        DATE_FORMAT(s.tanggal_lahir, '%d-%m-%Y') AS tanggal_lahir,
-        s.tempat_lahir,
-        s.alamat,
-        s.jenis_kelamin,
-        s.agama,
-        s.no_telepon,
-        s.foto_profil,
-        DATE_FORMAT(s.created_at, '%d %M %Y %H:%i:%s') AS tanggal_daftar_siswa,
-        krs.krs_id,
-        krs.status_pembayaran
-      FROM siswa s
-      JOIN krs ON s.nis = krs.siswa_nis
-      WHERE krs.kelas_id = ?
-      ORDER BY s.nama_siswa ASC
-    `, [kelas_id]);
+    const [siswaResult] = await db.query('CALL sp_read_siswa_from_kelas(?)', [kelas_id]);
+    const siswaData = siswaResult[0]; 
 
-    if (rows.length === 0) {
+    // SP sp_read_siswa_from_kelas mengembalikan: 
+    // s.nama_siswa, s.foto_profil, s.nis, s.nisn, s.jenis_kelamin
+    // Ini akan dikembalikan apa adanya.
+
+    if (siswaData.length === 0) {
       return res.status(200).json({ 
-          message: 'Tidak ada siswa di kelas ini.',
-          kelas_info: kelasExist[0], // Kirim info kelas meskipun kosong
-          siswa: [] 
+        message: 'Tidak ada siswa di kelas ini.',
+        kelas_info: kelasInfoData, // Mengembalikan data mentah kelas info
+        siswa: [] 
       });
     }
-
+    
     res.status(200).json({
-        kelas_info: kelasExist[0],
-        siswa: rows
+      kelas_info: kelasInfoData, // Mengembalikan data mentah kelas info
+      siswa: siswaData 
     });
   } catch (error) {
     console.error(error);
