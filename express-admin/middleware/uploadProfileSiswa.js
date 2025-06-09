@@ -4,20 +4,19 @@ const fs = require('fs');
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const dir = 'Upload/profile_image';
+    const dir = path.join(__dirname, '../../Express-siswa/Upload/profile_image');
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
     cb(null, dir);
   },
-filename: (req, file, cb) => {
+  filename: (req, file, cb) => {
   const uniqueName = Date.now() + '-' + file.originalname;
   cb(null, uniqueName);
 }
- 
-
 });
 
-const upload = multer({ storage: storage });
+const uploadsiswa = multer({ storage: storage });
 
-module.exports = upload;
+module.exports = uploadsiswa;
+ 

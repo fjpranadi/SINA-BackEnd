@@ -4,7 +4,7 @@ const fs = require('fs');
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const dir = 'Upload/profile_image';
+    const dir = path.join(__dirname, '../../Express-guru/Upload/profile_image');
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
@@ -18,6 +18,6 @@ filename: (req, file, cb) => {
 
 });
 
-const upload = multer({ storage: storage });
+const uploadguru = multer({ storage: storage });
 
-module.exports = upload;
+module.exports = uploadguru;

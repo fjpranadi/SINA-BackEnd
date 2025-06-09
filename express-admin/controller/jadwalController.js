@@ -123,6 +123,8 @@ const updateJadwal = async (req, res) => {
   const { mapel_id, kelas_id, ruangan, hari, jam_ke, start, finish } = req.body;
 
   // Validasi, termasuk 'hari'
+
+  
   if (!mapel_id || !kelas_id || !ruangan || !hari || !jam_ke || !start || !finish) {
     return res.status(400).json({ message: 'Semua field (mapel_id, kelas_id, ruangan, hari, jam_ke, start, finish) wajib diisi!' });
   }

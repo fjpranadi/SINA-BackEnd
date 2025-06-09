@@ -202,7 +202,7 @@ const getSiswaByKelasId = async (req, res) => {
         return res.status(404).json({ message: 'Kelas tidak ditemukan.' });
     }
 
-    const [rows] = await db.query(`
+    const [rows] = await db.query(` 
       SELECT 
         s.nis,
         s.nisn,

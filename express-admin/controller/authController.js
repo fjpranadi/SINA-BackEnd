@@ -1,9 +1,7 @@
-require('dotenv').config();
 const db = require('../database/db');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const JWT_SECRET = process.env.JWT_SECRET;
- // Ganti ini di real project
+const JWT_SECRET = 'token-jwt'; // Ganti ini di real project
 
 // Helper buat cek kata-kata berbahaya
 const containsSQLInjection = (input) => {

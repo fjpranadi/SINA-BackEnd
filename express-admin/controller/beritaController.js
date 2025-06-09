@@ -1,4 +1,16 @@
 const db = require('../database/db');
+const path = require('path');
+const fs = require('fs');
+const crypto = require('crypto');
+
+// Fungsi untuk rename file gambar
+const generateRandomFilename = (originalName) => {
+  const ext = path.extname(originalName);
+  const randomStr = crypto.randomBytes(8).toString('hex');
+  const timestamp = Date.now();
+  return `${timestamp}_${randomStr}${ext}`;
+};
+
 
 
 const getAllberita = async (req, res) => {
@@ -25,11 +37,21 @@ const getberitalById = async (req, res) => {
     try {
         const [rows] = await db.query('SELECT * FROM berita WHERE berita_id = ?', [id]);
         if (rows.length === 0) return res.status(404).json({ message: 'berita tidak ditemukan' });
-        res.status(200).json(rows[0]);
+
+        const username = req.user.username; // ambil dari JWT
+
+        // Tambahkan username ke objek berita
+        const beritaWithUsername = {
+            ...rows[0],
+            username,
+        };
+
+        res.status(200).json(beritaWithUsername);
     } catch (error) {
         res.status(500).json({ message: 'Gagal mengambil data berita', error });
     }
 };
+
 
 
 const createberita = async (req, res) => {
@@ -56,9 +78,30 @@ const createberita = async (req, res) => {
 
         const admin_id = adminResult[0].admin_id;
 
+	// Fungsi untuk generate berita_id unik (BigInt 15 digit)
+        const generateUniqueBeritaId = async () => {
+            let unique = false;
+            let berita_id;
+
+            while (!unique) {
+                berita_id = BigInt('' + Math.floor(1e14 + Math.random() * 9e14)); // 15 digit BigInt
+                const [check] = await db.query(
+                    'SELECT berita_id FROM berita WHERE berita_id = ?',
+                    [berita_id]
+                );
+                if (check.length === 0) {
+                    unique = true;
+                }
+            }
+
+            return berita_id;
+        };
+
+        const berita_id = await generateUniqueBeritaId();
+
         const [result] = await db.query(
-            'INSERT INTO berita (admin_id, guru_nip, judul, isi, foto, tipe) VALUES (?, ?, ?, ?, ?, ?)',
-            [admin_id, guru_nip, judul, isi, foto, tipe]
+            'INSERT INTO berita (berita_id, admin_id, guru_nip, judul, isi, foto, tipe) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [berita_id, admin_id, guru_nip, judul, isi, foto, tipe]
         );
 
         res.status(201).json({ message: 'Berita berhasil ditambahkan', berita_id: result.insertId });

@@ -87,6 +87,7 @@ const getMapelKelas = async (req, res) => {
   }
 };
 
+// GET materi dan tugas
 const getMateri = async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -123,22 +124,24 @@ const getMateri = async (req, res) => {
     const mapelIds = filteredMapelKrsList.map(m => m.mapel_id);
     const krsIds = filteredMapelKrsList.map(m => m.krs_id);
 
-    // Query materi yang relevan
+    // Query materi yang relevan melalui krs_detail_materi
     const [materiRows] = await db.query(`
       SELECT
-        mtr.materi_id,
-        mtr.nama_materi,
-        mtr.uraian,
-        mtr.lampiran,
-        mtr.created_at,
+        m.materi_id,
+        m.nama_materi,
+        m.uraian,
+        m.lampiran,
+        m.created_at,
         mp.nama_mapel,
         kls.nama_kelas
-      FROM materi mtr
-      JOIN mapel mp ON mtr.mapel_id = mp.mapel_id
-      JOIN krs ON mtr.krs_id = krs.krs_id
-      JOIN kelas kls ON krs.kelas_id = kls.kelas_id
-      WHERE mtr.mapel_id IN (?) AND mtr.krs_id IN (?)
-      ORDER BY mtr.created_at DESC
+      FROM materi m
+      JOIN krs_detail_materi kdm ON m.materi_id = kdm.materi_id
+      JOIN krs_detail kd ON kdm.krs_id = kd.krs_id AND kdm.mapel_id = kd.mapel_id
+      JOIN mapel mp ON kd.mapel_id = mp.mapel_id
+      JOIN krs kr ON kd.krs_id = kr.krs_id
+      JOIN kelas kls ON kr.kelas_id = kls.kelas_id
+      WHERE kd.mapel_id IN (?) AND kd.krs_id IN (?)
+      ORDER BY m.created_at DESC
     `, [mapelIds, krsIds]);
 
     res.status(200).json({
@@ -152,9 +155,11 @@ const getMateri = async (req, res) => {
   }
 };
 
+
 const getTugas = async (req, res) => {
   try {
     const userId = req.user.userId;
+    const { mapel_id } = req.params;
 
     // Ambil NIS siswa dari userId
     const [[siswa]] = await db.query('SELECT nis FROM siswa WHERE user_id = ?', [userId]);
@@ -163,42 +168,54 @@ const getTugas = async (req, res) => {
     }
     const nis = siswa.nis;
 
-    // Ambil semua mapel_id dan krs_id siswa tersebut
-    const [mapelKrsList] = await db.query(`
-      SELECT kd.mapel_id, kd.krs_id
-      FROM krs_detail kd
-      JOIN krs k ON kd.krs_id = k.krs_id
-      WHERE k.siswa_nis = ?
+    // Ambil semua krs_id yang terkait dengan siswa tersebut
+    const [krsList] = await db.query(`
+      SELECT krs_id FROM krs WHERE siswa_nis = ?
     `, [nis]);
 
-    if (mapelKrsList.length === 0) {
-      return res.status(404).json({ status: 404, message: 'Tidak ada mapel yang terkait dengan siswa.' });
+    if (krsList.length === 0) {
+      return res.status(404).json({ status: 404, message: 'Siswa tidak terdaftar di kelas manapun.' });
     }
 
-    const mapelIds = mapelKrsList.map(m => m.mapel_id);
-    const krsIds = mapelKrsList.map(m => m.krs_id);
+    const krsIds = krsList.map(k => k.krs_id);
 
-    // Query tugas untuk semua mapel dan krs terkait
-    const [tugasRows] = await db.query(`
+    // Query tugas melalui krs_detail_materi
+    let query = `
       SELECT 
-        tgs.tugas_id,
-        tgs.judul AS nama_tugas,
+        t.tugas_id,
+        t.judul AS nama_tugas,
+        t.deskripsi,
+        t.lampiran,
+        t.tenggat_kumpul,
+        t.created_at,
         mp.nama_mapel,
-        tgs.tenggat_kumpul,
-        tgs.tanggal_pengumpulan,
-        tgs.created_at,
-        kls.nama_kelas
-      FROM tugas tgs
-      JOIN mapel mp ON tgs.mapel_id = mp.mapel_id
-      JOIN krs ON tgs.krs_id = krs.krs_id
-      JOIN kelas kls ON krs.kelas_id = kls.kelas_id
-      WHERE tgs.mapel_id IN (?) AND tgs.krs_id IN (?)
-      ORDER BY tgs.created_at DESC
-    `, [mapelIds, krsIds]);
+        kls.nama_kelas,
+	kdm.uraian,
+        kdm.file_jawaban,
+        kdm.nilai,
+        kdm.tanggal_pengumpulan
+      FROM tugas t
+      JOIN krs_detail_materi kdm ON t.tugas_id = kdm.tugas_id
+      JOIN krs_detail kd ON kdm.krs_id = kd.krs_id AND kdm.mapel_id = kd.mapel_id
+      JOIN mapel mp ON kd.mapel_id = mp.mapel_id
+      JOIN krs kr ON kd.krs_id = kr.krs_id
+      JOIN kelas kls ON kr.kelas_id = kls.kelas_id
+      WHERE kd.mapel_id = ? AND kd.krs_id IN (?)
+      ORDER BY t.tenggat_kumpul ASC
+    `;
+
+    const [tugasList] = await db.query(query, [mapel_id, krsIds]);
+
+    if (tugasList.length === 0) {
+      return res.status(404).json({ 
+        status: 404, 
+        message: 'Tidak ada tugas untuk mapel ini atau siswa tidak terdaftar di mapel tersebut.' 
+      });
+    }
 
     res.status(200).json({
       status: 200,
-      data: tugasRows
+      data: tugasList
     });
 
   } catch (err) {
@@ -206,7 +223,6 @@ const getTugas = async (req, res) => {
     res.status(500).json({ status: 500, message: 'Gagal mengambil data tugas.' });
   }
 };
-
 // GET materi detail
 const getMateriDetail = async (req, res) => {
   try {
