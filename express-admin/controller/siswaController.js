@@ -6,8 +6,6 @@ const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 
-
-
 // Helper untuk deteksi kata berbahayaa
 const containsSQLInjection = (input) => {
   const forbiddenWords = ['select', 'insert', 'update', 'delete', 'drop', 'alter', 'create', 'replace', 'truncate'];
@@ -24,6 +22,30 @@ const hashFileName = (originalname) => {
 };
 
 // CREATE - Tambah Siswa + Ortu + User
+// Helper function untuk generate random BIGINT user_id
+const generateUniqueUserId = async (conn) => {
+  let isUnique = false;
+  let newId;
+  
+  while (!isUnique) {
+    // Generate 15-digit random number (BIGINT compatible)
+    newId = BigInt(Math.floor(1e14 + Math.random() * 9e14)); // 100000000000000 - 999999999999999
+    
+    // Cek apakah ID sudah ada di database
+    const [existing] = await conn.query(
+      'SELECT user_id FROM user WHERE user_id = ?', 
+      [newId.toString()]
+    );
+    
+    if (existing.length === 0) {
+      isUnique = true;
+    }
+  }
+  
+  return newId;
+};
+
+// CREATE - Tambah Siswa + Ortu + User
 const tambahSiswa = async (req, res) => {
   const {
     email, nama_siswa, nis, nisn, tanggal_lahir, tempat_lahir, alamat, jenis_kelamin,
@@ -37,9 +59,9 @@ const tambahSiswa = async (req, res) => {
   const userPassword = bcrypt.hashSync('siswa123', 10);
   const ortuPassword = bcrypt.hashSync('ortu123', 10);
 
-  const usernameFromEmail = email.split('@')[0]; // username dari email
-
+  const usernameFromEmail = email.split('@')[0];
   const filename = fotoProfil ? hashFileName(fotoProfil.originalname) : null;
+  
   if (fotoProfil) {
     fs.renameSync(fotoProfil.path, path.join(fotoProfil.destination, filename));
   }
@@ -48,26 +70,26 @@ const tambahSiswa = async (req, res) => {
   await conn.beginTransaction();
 
   try {
-
-    // ✅ Validasi kelas_id
+    // Validasi kelas_id
     const [cekKelas] = await conn.query(`SELECT * FROM kelas WHERE kelas_id = ?`, [kelas_id]);
     if (cekKelas.length === 0) {
       throw new Error(`Kelas dengan ID ${kelas_id} tidak ditemukan.`);
     }
 
-    // 1. Insert user siswa
-    const [userSiswa] = await conn.query(`INSERT INTO user (username, email, password, role, created_at)
-      VALUES (?, ?, ?, 'siswa', NOW())`, [usernameFromEmail, email, userPassword]);
+    // 1. Insert user siswa dengan user_id unik
+    const siswaUserId = await generateUniqueUserId(conn);
+    await conn.query(`INSERT INTO user (user_id, username, email, password, role, created_at)
+      VALUES (?, ?, ?, ?, 'siswa', NOW())`, 
+      [siswaUserId.toString(), usernameFromEmail, email, userPassword]);
 
     // 2. Insert siswa
     await conn.query(`INSERT INTO siswa (nis, user_id, nisn, nama_siswa, tanggal_lahir, tempat_lahir,
       alamat, jenis_kelamin, agama, no_telepon, foto_profil, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
-      [nis, userSiswa.insertId, nisn, nama_siswa, tanggal_lahir, tempat_lahir, alamat,
+      [nis, siswaUserId.toString(), nisn, nama_siswa, tanggal_lahir, tempat_lahir, alamat,
         jenis_kelamin, agama, no_telepon, filename]);
 
     // 3. Insert data KRS
-    // ✅ Generate krs_id secara manual (misal format KRS0001)
     const [lastKrs] = await conn.query(`SELECT krs_id FROM krs ORDER BY krs_id DESC LIMIT 1`);
     let newKrsId = 'KRS0001';
     if (lastKrs.length > 0) {
@@ -75,67 +97,87 @@ const tambahSiswa = async (req, res) => {
       newKrsId = `KRS${lastNumber.toString().padStart(4, '0')}`;
     }
 
-     await conn.query(`INSERT INTO krs (krs_id, siswa_nis, kelas_id, status_pembayaran, created_at)
+    await conn.query(`INSERT INTO krs (krs_id, siswa_nis, kelas_id, status_pembayaran, created_at)
       VALUES (?, ?, ?, 0, NOW())`, [newKrsId, nis, kelas_id]);
 
     // === AYAH ===
-    const [userAyah] = await conn.query(`INSERT INTO user (username, email, password, role, created_at)
-      VALUES (?, ?, ?, 'ortu', NOW())`, [
-        ayah_no_telepon, ayah_email, ortuPassword
-    ]);
+    const ayahUserId = await generateUniqueUserId(conn);
+    await conn.query(`INSERT INTO user (user_id, username, email, password, role, created_at)
+      VALUES (?, ?, ?, ?, 'ortu', NOW())`, 
+      [ayahUserId.toString(), ayah_no_telepon, ayah_email, ortuPassword]);
 
     await conn.query(`INSERT INTO ortu (nik, user_id, nama_ortu, alamat, status_ortu,
       pekerjaan, tempat_lahir_ortu, tanggal_lahir_ortu, no_telepon, created_at)
       VALUES (?, ?, ?, ?, 'ayah', ?, ?, ?, ?, NOW())`, [
-        ayah_nik, userAyah.insertId, ayah_nama, ayah_alamat,
+        ayah_nik, ayahUserId.toString(), ayah_nama, ayah_alamat,
         ayah_pekerjaan, ayah_tempat_lahir, ayah_tanggal_lahir, ayah_no_telepon
     ]);
 
     await conn.query(`INSERT INTO siswa_ortu (nis, nik, created_at) VALUES (?, ?, NOW())`, [nis, ayah_nik]);
 
     // === IBU ===
-    const [userIbu] = await conn.query(`INSERT INTO user (username, email, password, role, created_at)
-      VALUES (?, ?, ?, 'ortu', NOW())`, [
-        ibu_no_telepon, ibu_email, ortuPassword
-    ]);
+    const ibuUserId = await generateUniqueUserId(conn);
+    await conn.query(`INSERT INTO user (user_id, username, email, password, role, created_at)
+      VALUES (?, ?, ?, ?, 'ortu', NOW())`, 
+      [ibuUserId.toString(), ibu_no_telepon, ibu_email, ortuPassword]);
 
     await conn.query(`INSERT INTO ortu (nik, user_id, nama_ortu, alamat, status_ortu,
       pekerjaan, tempat_lahir_ortu, tanggal_lahir_ortu, no_telepon, created_at)
       VALUES (?, ?, ?, ?, 'ibu', ?, ?, ?, ?, NOW())`, [
-        ibu_nik, userIbu.insertId, ibu_nama, ibu_alamat,
+        ibu_nik, ibuUserId.toString(), ibu_nama, ibu_alamat,
         ibu_pekerjaan, ibu_tempat_lahir, ibu_tanggal_lahir, ibu_no_telepon
     ]);
 
     await conn.query(`INSERT INTO siswa_ortu (nis, nik, created_at) VALUES (?, ?, NOW())`, [nis, ibu_nik]);
 
     // === WALI (jika ada) ===
-    if (wali_nik && wali_nama && wali_email) {
-      const [userWali] = await conn.query(`INSERT INTO user (username, email, password, role, created_at)
-        VALUES (?, ?, ?, 'ortu', NOW())`, [
-          wali_no_telepon, wali_email, ortuPassword
-      ]);
+let waliUserId = null; // Deklarasikan di luar blok if
 
-      await conn.query(`INSERT INTO ortu (nik, user_id, nama_ortu, alamat, status_ortu,
-        pekerjaan, tempat_lahir_ortu, tanggal_lahir_ortu, no_telepon, created_at)
-        VALUES (?, ?, ?, ?, 'wali', ?, ?, ?, ?, NOW())`, [
-          wali_nik, userWali.insertId, wali_nama, wali_alamat,
-          wali_pekerjaan, wali_tempat_lahir, wali_tanggal_lahir, wali_no_telepon
-      ]);
+if (wali_nik && wali_nama && wali_email) {
+  waliUserId = await generateUniqueUserId(conn);
+  await conn.query(`INSERT INTO user (user_id, username, email, password, role, created_at)
+    VALUES (?, ?, ?, ?, 'ortu', NOW())`, 
+    [waliUserId.toString(), wali_no_telepon, wali_email, ortuPassword]);
 
-      await conn.query(`INSERT INTO siswa_ortu (nis, nik, created_at) VALUES (?, ?, NOW())`, [nis, wali_nik]);
-    }
+  await conn.query(`INSERT INTO ortu (nik, user_id, nama_ortu, alamat, status_ortu,
+    pekerjaan, tempat_lahir_ortu, tanggal_lahir_ortu, no_telepon, created_at)
+    VALUES (?, ?, ?, ?, 'wali', ?, ?, ?, ?, NOW())`, [
+      wali_nik, waliUserId.toString(), wali_nama, wali_alamat,
+      wali_pekerjaan, wali_tempat_lahir, wali_tanggal_lahir, wali_no_telepon
+  ]);
+
+  await conn.query(`INSERT INTO siswa_ortu (nis, nik, created_at) VALUES (?, ?, NOW())`, [nis, wali_nik]);
+}
 
     await conn.commit();
-    res.status(201).json({ message: 'Data siswa, ayah, ibu (dan wali jika ada) berhasil ditambahkan.' });
+    
+    // Prepare response data
+    const responseData = { 
+      message: 'Data siswa, ayah, ibu (dan wali jika ada) berhasil ditambahkan.',
+      user_ids: {
+        siswa: siswaUserId.toString(),
+        ayah: ayahUserId.toString(),
+        ibu: ibuUserId.toString()
+      }
+    };
+
+    // Add wali data if exists
+    if (waliUserId) {
+      responseData.user_ids.wali = waliUserId.toString();
+    }
+
+    res.status(201).json(responseData);
   } catch (error) {
     await conn.rollback();
-    console.error(error);
-    res.status(500).json({ error: error.message });
+    console.error('Error tambah siswa:', error);
+    res.status(500).json({ 
+      error: error.message,
+      detail: 'Gagal menambahkan data siswa dan orang tua' 
+    });
   } finally {
     conn.release();
   }
 };
-
 
 // READ - Get semua siswa
 const getAllSiswa = async (req, res) => {
@@ -257,13 +299,101 @@ if (newNis && newNis !== nis) {
 };
 
 // DELETE - Hapus siswa
+// DELETE - Hapus siswa dan semua data terkait
 const deleteSiswa = async (req, res) => {
   const { nis } = req.params;
+  const conn = await db.getConnection();
+  
   try {
-    await db.query(`DELETE FROM siswa WHERE nis = ?`, [nis]);
-    res.json({ message: 'Data siswa berhasil dihapus.' });
+    await conn.beginTransaction();
+
+    // 1. Dapatkan user_id dari siswa yang akan dihapus
+    const [siswaData] = await conn.query(
+      `SELECT user_id FROM siswa WHERE nis = ?`, 
+      [nis]
+    );
+    
+    if (siswaData.length === 0) {
+      return res.status(404).json({ message: 'Siswa tidak ditemukan' });
+    }
+    
+    const user_id = siswaData[0].user_id;
+
+    // 2. Dapatkan semua nik ortu yang terkait dengan siswa ini
+    const [ortuData] = await conn.query(
+      `SELECT nik FROM siswa_ortu WHERE nis = ?`,
+      [nis]
+    );
+    const nikOrtuList = ortuData.map(ortu => ortu.nik);
+
+    // 3. Hapus data KRS siswa
+    await conn.query(
+      `DELETE FROM krs WHERE siswa_nis = ?`,
+      [nis]
+    );
+
+    // 4. Hapus relasi siswa_ortu
+    await conn.query(
+      `DELETE FROM siswa_ortu WHERE nis = ?`,
+      [nis]
+    );
+
+    // 5. Hapus data ortu dan user ortu
+    for (const nik of nikOrtuList) {
+      // Dapatkan user_id ortu
+      const [ortu] = await conn.query(
+        `SELECT user_id FROM ortu WHERE nik = ?`,
+        [nik]
+      );
+      
+      if (ortu.length > 0) {
+        const ortu_user_id = ortu[0].user_id;
+        
+        // Hapus ortu
+        await conn.query(
+          `DELETE FROM ortu WHERE nik = ?`,
+          [nik]
+        );
+        
+        // Hapus user ortu
+        await conn.query(
+          `DELETE FROM user WHERE user_id = ?`,
+          [ortu_user_id]
+        );
+      }
+    }
+
+    // 6. Hapus siswa
+    await conn.query(
+      `DELETE FROM siswa WHERE nis = ?`,
+      [nis]
+    );
+
+    // 7. Hapus user siswa
+    await conn.query(
+      `DELETE FROM user WHERE user_id = ?`,
+      [user_id]
+    );
+
+    await conn.commit();
+    res.json({ 
+      message: 'Siswa dan semua data terkait berhasil dihapus',
+      deleted: {
+        siswa: nis,
+        user: user_id,
+        ortu: nikOrtuList,
+        krs: true
+      }
+    });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    await conn.rollback();
+    console.error('Error deleting siswa:', error);
+    res.status(500).json({ 
+      error: error.message,
+      message: 'Gagal menghapus data siswa' 
+    });
+  } finally {
+    conn.release();
   }
 };
 
@@ -275,7 +405,7 @@ const getSiswaBynis = async (req, res) => {
     const [rows] = await db.query(`
       SELECT 
         u.email, s.nis, s.nisn, s.nama_siswa, s.tanggal_lahir, s.tempat_lahir,
-        s.alamat, s.jenis_kelamin, s.agama, s.no_telepon, s.foto_profil,
+        s.alamat, s.jenis_kelamin, s.agama, s.no_telepon, s.foto_profil, s.created_at,
         
         -- Ayah
         ayah.nik AS ayah_nik,
@@ -320,6 +450,7 @@ const getSiswaBynis = async (req, res) => {
       agama: rows[0].agama,
       no_telepon: rows[0].no_telepon,
       foto_profil: rows[0].foto_profil,
+      created_at: rows[0].created_at,
     };
 
     for (const row of rows) {

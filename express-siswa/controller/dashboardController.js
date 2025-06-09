@@ -492,12 +492,12 @@ const getDashboardRingkasanSiswa = async (req, res) => {
     }
 
     // 3. Tugas belum dikerjakan (tanggal_pengumpulan IS NULL)
-    const [[belumDikerjakan]] = await db.query(`
-      SELECT COUNT(*) AS total
-      FROM krs_detail_materi
-      WHERE krs_id = ?
-        AND tanggal_pengumpulan IS NULL
-    `, [krs.krs_id]);
+   const [[belumDikerjakan]] = await db.query(`
+  SELECT COUNT(DISTINCT materi_id) AS total
+  FROM krs_detail_materi
+  WHERE krs_id = ?
+    AND tanggal_pengumpulan IS NULL
+`, [krs.krs_id]);
 
     // 4. Tugas terlambat (tanggal_pengumpulan > tenggat_kumpul)
     const [[terlambat]] = await db.query(`
@@ -538,5 +538,62 @@ WHERE kdm.krs_id = ?
   }
 };
 
+const getMateriHariIni = async (req, res) => {
+  const userId = req.user.userId;
+  const today = new Date().toISOString().split('T')[0]; // Format: YYYY-MM-DD
 
-module.exports = {getBiodataSiswa, getJadwalSiswa, editDataDiriSiswa, getBerita, getMateriSiswa, getTugasSiswa, editTugasSiswa, getBeritaById, getDashboardRingkasanSiswa, getJadwalSiswabyhari };
+  try {
+    // 1. Ambil NIS siswa dari user ID
+    const [[siswa]] = await db.query('SELECT nis FROM siswa WHERE user_id = ?', [userId]);
+    if (!siswa) {
+      return res.status(404).json({ message: 'Data siswa tidak ditemukan' });
+    }
+
+    // 2. Ambil krs_id siswa
+    const [[krs]] = await db.query('SELECT krs_id FROM krs WHERE siswa_nis = ? LIMIT 1', [siswa.nis]);
+    if (!krs) {
+      return res.status(404).json({ message: 'KRS siswa tidak ditemukan' });
+    }
+
+    // 3. Ambil materi hari ini melalui krs_detail_materi
+    const [materiList] = await db.query(`
+      SELECT 
+        m.materi_id,
+        m.nama_materi,
+        m.uraian,
+        m.lampiran,
+        m.created_at,
+        kdm.mapel_id,
+        mp.nama_mapel,
+        j.hari,
+        mj.start,
+        mj.finish
+      FROM krs_detail_materi kdm
+      JOIN materi m ON kdm.materi_id = m.materi_id
+      JOIN mapel mp ON kdm.mapel_id = mp.mapel_id
+      LEFT JOIN jadwal j ON (
+        kdm.mapel_id = j.mapel_id 
+        AND j.kelas_id = (SELECT kelas_id FROM krs WHERE krs_id = ?)
+      )
+      LEFT JOIN master_jadwal mj ON j.master_jadwal_id = mj.master_jadwal_id
+      WHERE kdm.krs_id = ?
+        AND DATE(m.created_at) = ?
+      ORDER BY m.created_at DESC
+    `, [krs.krs_id, krs.krs_id, today]);
+
+    res.status(200).json({
+      message: 'Materi hari ini berhasil diambil',
+      status: 200,
+      data: materiList
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      message: 'Gagal mengambil materi hari ini',
+      error: err.message
+    });
+  }
+};
+
+module.exports = {getBiodataSiswa, getJadwalSiswa, editDataDiriSiswa, getBerita, getMateriSiswa, getTugasSiswa, editTugasSiswa, getBeritaById, getDashboardRingkasanSiswa, getJadwalSiswabyhari, getMateriHariIni };

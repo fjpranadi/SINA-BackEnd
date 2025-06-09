@@ -38,30 +38,64 @@ const createGuru = async (req, res) => {
   } = req.body;
 
   const username = generateUsernameFromName(nama_guru);
-
-
   const foto_profile = req.file ? req.file.filename : null;
-  const plainPassword = generateRandomPassword(); // 6 karakter hex random
+  const plainPassword = generateRandomPassword();
 
   try {
+    // Fungsi untuk generate BIGINT random yang unik
+    const generateUniqueBigIntId = async () => {
+      let isUnique = false;
+      let newId;
+      
+      while (!isUnique) {
+        // Generate 15-digit random number (BIGINT compatible)
+        newId = BigInt(Math.floor(1e14 + Math.random() * 9e14)); // 100000000000000 - 999999999999999
+        
+        // Cek apakah ID sudah ada di database
+        const [existing] = await db.query(
+          'SELECT user_id FROM user WHERE user_id = ?', 
+          [newId.toString()]
+        );
+        
+        if (existing.length === 0) {
+          isUnique = true;
+        }
+      }
+      
+      return newId;
+    };
 
-    const [result] = await db.query(
-      'INSERT INTO user (username, email, password, role) VALUES (?, ?, ?, ?)',
-      [username, email, plainPassword, 'guru']
-    );
+    // Generate user_id yang unik
+    const user_id = await generateUniqueBigIntId();
+    
+    // Hash password sebelum disimpan
+    const hashedPassword = await bcrypt.hash(plainPassword, 10);
 
-    const user_id = result.insertId;
-
+    // Insert ke tabel user dengan user_id yang digenerate
     await db.query(
-      `INSERT INTO guru (nip, user_id, nama_guru, alamat, no_telepon, agama_guru, jenis_kelamin_guru, tanggal_lahir_guru, tempat_lahir_guru, foto_profil)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [nip, user_id, nama_guru, alamat, no_telepon, agama_guru, jenis_kelamin_guru, tanggal_lahir_guru, tempat_lahir_guru, foto_profile]
+      'INSERT INTO user (user_id, username, email, password, role) VALUES (?, ?, ?, ?, ?)',
+      [user_id.toString(), username, email, hashedPassword, 'guru']
     );
 
-    res.status(200).json({ message: 'Guru berhasil ditambahkan'});
+    // Insert ke tabel guru
+    await db.query(
+      `INSERT INTO guru (nip, user_id, nama_guru, alamat, no_telepon, agama_guru, 
+        jenis_kelamin_guru, tanggal_lahir_guru, tempat_lahir_guru, foto_profil)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [nip, user_id.toString(), nama_guru, alamat, no_telepon, agama_guru, 
+       jenis_kelamin_guru, tanggal_lahir_guru, tempat_lahir_guru, foto_profile]
+    );
+
+    res.status(200).json({ 
+      message: 'Guru berhasil ditambahkan',
+      user_id: user_id.toString() // Mengembalikan user_id sebagai string untuk menghindari precision issues
+    });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: 'Gagal menambahkan guru', error: error.message });
+    res.status(500).json({ 
+      message: 'Gagal menambahkan guru', 
+      error: error.message 
+    });
   }
 };
 
@@ -122,8 +156,9 @@ const deleteGuru = async (req, res) => {
 
 // UPDATE - Perbarui data Guru
 const updateGuru = async (req, res) => {
-  const { nip } = req.params;
+  const { nip } = req.params; // NIP lama
   const {
+    new_nip, // NIP baru (ditambahkan)
     nama_guru, alamat, no_telepon, agama_guru,
     jenis_kelamin_guru, tanggal_lahir_guru, tempat_lahir_guru,
     email
@@ -132,7 +167,7 @@ const updateGuru = async (req, res) => {
   const foto_profile = req.file ? req.file.filename : null;
 
   try {
-    // Ambil data lama
+    // 1. Ambil data lama
     const [existingRows] = await db.query(
       `SELECT g.*, u.email 
        FROM guru g 
@@ -147,15 +182,27 @@ const updateGuru = async (req, res) => {
 
     const oldData = existingRows[0];
 
-    // Perbarui tabel user (email saja)
+    // 2. Validasi jika new_nip sudah digunakan oleh guru lain
+    if (new_nip && new_nip !== nip) {
+      const [checkNip] = await db.query(
+        `SELECT nip FROM guru WHERE nip = ? AND nip != ?`,
+        [new_nip, nip]
+      );
+      if (checkNip.length > 0) {
+        return res.status(400).json({ message: 'NIP sudah digunakan oleh guru lain.' });
+      }
+    }
+
+    // 3. Perbarui tabel user (email)
     await db.query(
       `UPDATE user SET email = ? WHERE user_id = ?`,
       [email || oldData.email, oldData.user_id]
     );
 
-    // Perbarui tabel guru
+    // 4. Perbarui tabel guru (termasuk NIP baru jika ada)
     await db.query(
       `UPDATE guru SET 
+        nip = ?, 
         nama_guru = ?, 
         alamat = ?, 
         no_telepon = ?, 
@@ -166,6 +213,7 @@ const updateGuru = async (req, res) => {
         foto_profil = ?
       WHERE nip = ?`,
       [
+        new_nip || nip, // Gunakan new_nip jika ada, jika tidak pakai nip lama
         nama_guru || oldData.nama_guru,
         alamat || oldData.alamat,
         no_telepon || oldData.no_telepon,
@@ -174,7 +222,7 @@ const updateGuru = async (req, res) => {
         tanggal_lahir_guru || oldData.tanggal_lahir_guru,
         tempat_lahir_guru || oldData.tempat_lahir_guru,
         foto_profile || oldData.foto_profil,
-        nip
+        nip // WHERE condition tetap pakai NIP lama
       ]
     );
 

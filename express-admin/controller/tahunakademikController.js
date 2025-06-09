@@ -5,46 +5,68 @@ const JWT_SECRET = 'token-jwt';
 const crypto = require('crypto');
 
 // CREATE - Tambah Tahun Akademik
+// CREATE - Tambah Tahun Akademik
 const tambahTahunAkademik = async (req, res) => {
-  const { kurikulum_id, nama_kurikulum, tahun_mulai, tahun_berakhir, status } = req.body;
+  const { kurikulum_id, tahun_mulai, tahun_berakhir, status } = req.body;
 
-  if (!kurikulum_id || !nama_kurikulum || !tahun_mulai || !tahun_berakhir || !status) {
+  if (!kurikulum_id || !tahun_mulai || !tahun_berakhir || !status) {
     return res.status(400).json({ message: 'Semua field wajib diisi!' });
   }
- 
+
   try {
-    const [kurikulum] = await db.query(`SELECT * FROM kurikulum WHERE kurikulum_id = ?`, [kurikulum_id]);
+    // Check if kurikulum exists
+    const [kurikulum] = await db.query(
+      `SELECT * FROM kurikulum WHERE kurikulum_id = ?`, 
+      [kurikulum_id]
+    );
 
     if (kurikulum.length === 0) {
       return res.status(400).json({ message: 'Kurikulum tidak ditemukan.' });
     }
 
-    if (kurikulum[0].nama_kurikulum !== nama_kurikulum) {
-      return res.status(400).json({ message: 'Nama kurikulum tidak cocok dengan kurikulum_id.' });
+    const nama_kurikulum = kurikulum[0].nama_kurikulum;
+    
+    // Parse the dates
+    const startDate = new Date(tahun_mulai);
+    const endDate = new Date(tahun_berakhir);
+    
+    // Get the years and months
+    const startYear = startDate.getFullYear();
+    const startMonth = startDate.getMonth() + 1; // Months are 0-indexed
+    
+    // Determine academic year and semester
+    let academicYear, semester;
+    
+    if (startMonth >= 8 || startMonth <= 1) {
+      // August-January period (Semester 1 of current academic year)
+      academicYear = startMonth <= 1 ? startYear - 1 : startYear;
+      semester = 1;
+    } else {
+      // February-July period (Semester 2 of previous academic year)
+      academicYear = startYear - 1;
+      semester = 2;
+    }
+    
+    // Generate the ID (academic year + semester)
+    let tahunAkademikId = `${academicYear}${semester}`;
+    
+    // Check if ID already exists
+    const [existing] = await db.query(
+      `SELECT * FROM tahun_akademik WHERE tahun_akademik_id = ?`,
+      [tahunAkademikId]
+    );
+    
+    if (existing.length > 0) {
+      return res.status(400).json({
+        message: 'Tahun akademik untuk semester ini sudah ada',
+        existing_data: existing[0]
+      });
     }
 
-    // Ambil tahun dari tahun_mulai
-    const tahun = new Date(tahun_mulai).getFullYear();
-
-    // Hitung sudah ada berapa tahun akademik dengan tahun yang sama
-    const [existing] = await db.query(`
-      SELECT COUNT(*) AS jumlah 
-      FROM tahun_akademik 
-      WHERE YEAR(tahun_mulai) = ?
-    `, [tahun]);
-
-    const urutan = existing[0].jumlah + 1;
-    const tahunAkademikId = `${tahun}${urutan}`;
-
-    // Cek apakah ID sudah dipakai
-    const [cek] = await db.query(`SELECT * FROM tahun_akademik WHERE tahun_akademik_id = ?`, [tahunAkademikId]);
-    if (cek.length > 0) {
-      return res.status(400).json({ message: 'Tahun akademik ID sudah digunakan. Coba ubah tahun atau data lainnya.' });
-    }
-
-    // Simpan
+    // Insert new tahun akademik
     await db.query(
-      `INSERT INTO tahun_akademik (tahun_akademik_id, kurikulum_id, tahun_mulai, tahun_berakhir, status, created_at)
+      `INSERT INTO tahun_akademik 
+       (tahun_akademik_id, kurikulum_id, tahun_mulai, tahun_berakhir, status, created_at)
        VALUES (?, ?, ?, ?, ?, NOW())`,
       [tahunAkademikId, kurikulum_id, tahun_mulai, tahun_berakhir, status]
     );
@@ -57,16 +79,20 @@ const tambahTahunAkademik = async (req, res) => {
         nama_kurikulum,
         tahun_mulai,
         tahun_berakhir,
-        status
+        status,
+        academic_year: academicYear,
+        semester: semester
       }
     });
 
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: 'Gagal menambahkan tahun akademik.', error: error.message });
+    res.status(500).json({ 
+      message: 'Gagal menambahkan tahun akademik.', 
+      error: error.message 
+    });
   }
 };
-
 
 
 // READ - Ambil Semua Tahun Akademik
@@ -109,26 +135,21 @@ const getTahunAkademikById = async (req, res) => {
 
 // UPDATE - Edit Tahun Akademik
 const updateTahunAkademik = async (req, res) => {
-  const { kurikulum_id, nama_kurikulum, tahun_mulai, tahun_berakhir, status } = req.body;
+  const { kurikulum_id, tahun_mulai, tahun_berakhir, status } = req.body;
   const { tahun_akademik_id } = req.params;
 
-  if (!kurikulum_id || !nama_kurikulum || !tahun_mulai || !tahun_berakhir || !status) {
+  if (!kurikulum_id || !tahun_mulai || !tahun_berakhir || !status) {
     return res.status(400).json({ message: 'Semua field wajib diisi!' });
   }
 
   try {
-    // Validasi kurikulum
     const [kurikulum] = await db.query(`SELECT * FROM kurikulum WHERE kurikulum_id = ?`, [kurikulum_id]);
     if (kurikulum.length === 0) {
       return res.status(400).json({ message: 'Kurikulum tidak ditemukan.' });
     }
 
-    // Cek apakah nama_kurikulum cocok
-    if (kurikulum[0].nama_kurikulum !== nama_kurikulum) {
-      return res.status(400).json({ message: 'Nama kurikulum tidak cocok dengan kurikulum_id.' });
-    }
+    const nama_kurikulum = kurikulum[0].nama_kurikulum;
 
-    // Update data tanpa mengubah ID
     await db.query(
       `UPDATE tahun_akademik 
        SET kurikulum_id = ?, tahun_mulai = ?, tahun_berakhir = ?, status = ? 

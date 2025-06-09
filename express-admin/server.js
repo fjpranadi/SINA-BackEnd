@@ -24,6 +24,8 @@ const generateRandomFilename = (originalName) => {
 // Public path untuk akses gambar profile
 app.use('/Upload/profile_image', express.static(path.join(__dirname, 'Upload/profile_image')));
 
+app.use('/Upload/berita', express.static(path.join(__dirname, 'Upload/berita')));
+
 // PASANG CORS DI SINI
 app.use(cors({
   origin: 'http://localhost:5173', // sesuaikan dengan frontend kamu

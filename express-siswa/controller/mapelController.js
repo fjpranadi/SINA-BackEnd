@@ -206,13 +206,6 @@ const getTugas = async (req, res) => {
 
     const [tugasList] = await db.query(query, [mapel_id, krsIds]);
 
-    if (tugasList.length === 0) {
-      return res.status(404).json({ 
-        status: 404, 
-        message: 'Tidak ada tugas untuk mapel ini atau siswa tidak terdaftar di mapel tersebut.' 
-      });
-    }
-
     res.status(200).json({
       status: 200,
       data: tugasList

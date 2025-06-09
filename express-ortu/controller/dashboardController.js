@@ -102,188 +102,110 @@ const getBerita = async (req, res) => {
 
 const editBiodataOrtu = async (req, res) => {
   const userId = req.user.userId;
+  const {
+    nik,
+    nama_ortu,
+    alamat,
+    status_ortu,
+    pekerjaan,
+    tempat_lahir_ortu,
+    tanggal_lahir_ortu,
+    no_telepon
+  } = req.body;
+
+  // Handle file upload if exists
+  const foto_profil = req.file ? req.file.filename : null;
 
   try {
-    // Ambil data ortu lama
-    const [existingData] = await db.query('SELECT * FROM ortu WHERE user_id = ?', [userId]);
-    if (existingData.length === 0) {
-      return res.status(404).json({ message: 'Data ortu tidak ditemukan.' });
+    // 1. Get current data
+    const [currentData] = await db.query(
+      'SELECT * FROM ortu WHERE user_id = ?',
+      [userId]
+    );
+
+    if (currentData.length === 0) {
+      return res.status(404).json({ message: 'Data orang tua tidak ditemukan.' });
     }
 
-    const ortu = existingData[0];
+    const oldData = currentData[0];
 
-    // Ambil data dari body atau gunakan yang lama
-    const tempat_lahir_ortu = req.body.tempat_lahir_ortu || ortu.tempat_lahir_ortu;
-    const tanggal_lahir_ortu = req.body.tanggal_lahir_ortu || ortu.tanggal_lahir_ortu;
-    const no_telepon = req.body.no_telepon || ortu.no_telepon;
-    const alamat = req.body.alamat || ortu.alamat;
-    const pekerjaan = req.body.pekerjaan || ortu.pekerjaan;
-    const status_ortu = req.body.status_ortu || ortu.status_ortu;
+    // 2. Prepare update data
+    const updateData = {
+      nik: nik || oldData.nik,
+      nama_ortu: nama_ortu || oldData.nama_ortu,
+      alamat: alamat || oldData.alamat,
+      status_ortu: status_ortu || oldData.status_ortu,
+      pekerjaan: pekerjaan || oldData.pekerjaan,
+      tempat_lahir_ortu: tempat_lahir_ortu || oldData.tempat_lahir_ortu,
+      tanggal_lahir_ortu: tanggal_lahir_ortu || oldData.tanggal_lahir_ortu,
+      no_telepon: no_telepon || oldData.no_telepon,
+      foto_profil: foto_profil || oldData.foto_profil
+    };
 
-    // Cek apakah ada file foto profil baru
-    let foto_profil = ortu.foto_profil;
-    if (req.file && req.file.filename) {
-      foto_profil = req.file.filename;
-    }
+    // 3. Check for changes and prepare success messages
+    const successMessages = [];
+    
+    if (nik && nik !== oldData.nik) successMessages.push("NIK berhasil diubah");
+    if (nama_ortu && nama_ortu !== oldData.nama_ortu) successMessages.push("Nama berhasil diubah");
+    if (alamat && alamat !== oldData.alamat) successMessages.push("Alamat berhasil diubah");
+    if (status_ortu && status_ortu !== oldData.status_ortu) successMessages.push("Status berhasil diubah");
+    if (pekerjaan && pekerjaan !== oldData.pekerjaan) successMessages.push("Pekerjaan berhasil diubah");
+    if (tempat_lahir_ortu && tempat_lahir_ortu !== oldData.tempat_lahir_ortu) successMessages.push("Tempat lahir berhasil diubah");
+    if (tanggal_lahir_ortu && tanggal_lahir_ortu !== oldData.tanggal_lahir_ortu) successMessages.push("Tanggal lahir berhasil diubah");
+    if (no_telepon && no_telepon !== oldData.no_telepon) successMessages.push("Nomor telepon berhasil diubah");
+    if (foto_profil) successMessages.push("Foto profil berhasil diubah");
 
-    // Update ke DB
-    await db.query(`
-      UPDATE ortu SET 
-        tempat_lahir_ortu = ?, 
-        tanggal_lahir_ortu = ?, 
-        no_telepon = ?, 
-        alamat = ?, 
-        pekerjaan = ?, 
-        status_ortu = ?, 
-        foto_profil = ?
-      WHERE user_id = ?
-    `, [
-      tempat_lahir_ortu,
-      tanggal_lahir_ortu,
-      no_telepon,
-      alamat,
-      pekerjaan,
-      status_ortu,
-      foto_profil,
-      userId
-    ]);
-
-    return res.status(200).json({ message: 'Biodata ortu berhasil diperbarui.' });
-
-  } catch (error) {
-    console.error('Gagal update biodata ortu:', error);
-    return res.status(500).json({ message: 'Terjadi kesalahan saat mengupdate biodata.' });
-  }
-};
-
-const ubahPasswordOrtu = async (req, res) => {
-  const userId = req.user.userId;
-  const { password_lama, password_baru, konfirmasi_password } = req.body;
-
-  if (!password_lama || !password_baru || !konfirmasi_password) {
-    return res.status(400).json({ message: "Semua field wajib diisi." });
-  }
-
-  if (password_baru !== konfirmasi_password) {
-    return res.status(400).json({ message: "Konfirmasi password tidak cocok." });
-  }
-
-  try {
-    // Ambil password lama dari tabel user
-    const [userRows] = await db.query('SELECT password FROM user WHERE user_id = ?', [userId]);
-
-    if (userRows.length === 0) {
-      return res.status(404).json({ message: "User tidak ditemukan." });
-    }
-
-    const passwordTersimpan = userRows[0].password;
-
-    // Cek kecocokan password lama
-    if (password_lama !== passwordTersimpan) {
-      return res.status(401).json({ message: "Password lama salah." });
-    }
-
-    // Update password langsung
-    await db.query('UPDATE user SET password = ? WHERE user_id = ?', [password_baru, userId]);
-
-    return res.status(200).json({ message: "Password berhasil diubah." });
-  } catch (error) {
-    console.error("Gagal mengubah password:", error);
-    return res.status(500).json({ message: "Terjadi kesalahan server." });
-  }
-};
-
-const getInformasiAnakByNis = async (req, res) => {
-  const userId = req.user.userId;
-  const nis = req.params.nis;
-  const today = new Date().toISOString().split('T')[0];
-
-  try {
-    // 1. Ambil nik ortu dari user
-    const [ortuRows] = await db.query('SELECT nik FROM ortu WHERE user_id = ?', [userId]);
-    if (ortuRows.length === 0) {
-      return res.status(404).json({ message: 'Data ortu tidak ditemukan.' });
-    }
-    const nik = ortuRows[0].nik;
-
-    // 2. Cek apakah nis ini anak dari ortu tsb
-    const [checkNis] = await db.query('SELECT * FROM siswa_ortu WHERE nik = ? AND nis = ?', [nik, nis]);
-    if (checkNis.length === 0) {
-      return res.status(403).json({ message: 'Siswa ini tidak terhubung dengan akun ortu Anda.' });
-    }
-
-    // Ambil semua krs_id milik siswa berdasarkan NIS
-    const [krsResult] = await db.query(`
-      SELECT krs.krs_id
-      FROM krs
-      JOIN siswa ON siswa.nis = krs.siswa_nis
-      WHERE siswa.nis = ?
-    `, [nis]);
-
-    const krsIds = krsResult.map(row => row.krs_id);
-    if (krsIds.length === 0) {
-      return res.json({
-        data: {
-          nis,
-          tugas_belum_dikerjakan: 0,
-          tugas_terlambat: 0,
-          materi_hari_ini: 0,
-          absensi_tidak_hadir: 0
-        }
+    if (successMessages.length === 0) {
+      return res.status(200).json({ 
+        message: 'Tidak ada perubahan data.'
       });
     }
 
-    const placeholders = krsIds.map(() => '?').join(',');
+    // 4. Perform update
+    await db.query(
+      `UPDATE ortu SET 
+        nik = ?,
+        nama_ortu = ?,
+        alamat = ?,
+        status_ortu = ?,
+        pekerjaan = ?,
+        tempat_lahir_ortu = ?,
+        tanggal_lahir_ortu = ?,
+        no_telepon = ?,
+        foto_profil = ?
+      WHERE user_id = ?`,
+      [
+        updateData.nik,
+        updateData.nama_ortu,
+        updateData.alamat,
+        updateData.status_ortu,
+        updateData.pekerjaan,
+        updateData.tempat_lahir_ortu,
+        updateData.tanggal_lahir_ortu,
+        updateData.no_telepon,
+        updateData.foto_profil,
+        userId
+      ]
+    );
 
-    // 1. Tugas belum dikerjakan
-    const [belumDikerjakan] = await db.query(`
-      SELECT COUNT(*) AS total
-      FROM tugas
-      WHERE krs_id IN (${placeholders}) AND tanggal_pengumpulan IS NULL
-    `, krsIds);
-
-    // 2. Tugas terlambat
-    // 2. Tugas terlambat
-    const [terlambat] = await db.query(`
-      SELECT COUNT(*) AS total
-      FROM tugas
-      WHERE 
-        krs_id IN (${placeholders})
-        AND tanggal_pengumpulan IS NOT NULL
-        AND tanggal_pengumpulan > tenggat_kumpul
-    `, krsIds);
-
-
-    // 3. Materi hari ini
-    const [materiHariIni] = await db.query(`
-      SELECT COUNT(*) AS total
-      FROM materi
-      WHERE krs_id IN (${placeholders}) AND DATE(created_at) = CURDATE()
-    `, krsIds);
-
-    // 4. Absensi tidak hadir
-    const [tidakHadir] = await db.query(`
-      SELECT COUNT(*) AS total
-      FROM absensi
-      WHERE krs_id IN (${placeholders}) AND keterangan IN ('I', 'S', 'A')
-    `, krsIds);
-
-    res.json({
-      data: {
-        nis,
-        tugas_belum_dikerjakan: belumDikerjakan[0].total,
-        tugas_terlambat: terlambat[0].total,
-        materi_hari_ini: materiHariIni[0].total,
-        absensi_tidak_hadir: tidakHadir[0].total
-      }
+    return res.status(200).json({ 
+      messages: successMessages
     });
 
-  } catch (err) {
-    console.error('Error getInformasiAnakByNis:', err);
-    return res.status(500).json({ message: 'Terjadi kesalahan server.' });
+  } catch (error) {
+    console.error('Error saat mengupdate biodata ortu:', error);
+    
+    // Delete uploaded file if error occurs
+    if (foto_profil && fs.existsSync(foto_profil)) {
+      fs.unlinkSync(foto_profil);
+    }
+    
+    return res.status(500).json({ 
+      message: 'Terjadi kesalahan server.',
+      error: error.message 
+    });
   }
 };
 
 
-
-module.exports = {getBiodataOrtu, getSiswaByOrtu, getBerita, editBiodataOrtu, ubahPasswordOrtu, getInformasiAnakByNis};
+module.exports = {getBiodataOrtu, getSiswaByOrtu, getBerita, editBiodataOrtu};
