@@ -596,4 +596,96 @@ const getMateriHariIni = async (req, res) => {
   }
 };
 
-module.exports = {getBiodataSiswa, getJadwalSiswa, editDataDiriSiswa, getBerita, getMateriSiswa, getTugasSiswa, editTugasSiswa, getBeritaById, getDashboardRingkasanSiswa, getJadwalSiswabyhari, getMateriHariIni };
+const getSiswaCount = async (req, res) => {
+  try {
+    //Ambil userId dari JWT
+    const userId = req.user?.userId;
+
+    //Pastikan userId terbaca
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: 'User ID tidak ditemukan di JWT'
+      });
+    }
+
+    //Ambil NIS siswa dari user_id
+    const [[siswa]] = await db.query(
+      'SELECT nis FROM siswa WHERE user_id = ?',
+      [userId]
+    );
+    if (!siswa) {
+      return res.status(404).json({
+        success: false,
+        message: 'Data siswa tidak ditemukan'
+      });
+    }
+
+    //Hitung tugas belum dikerjakan
+    const [tugasBelumQuery] = await db.query(`
+      SELECT COUNT(*) AS total
+      FROM krs_detail_materi kdm
+      JOIN tugas t ON kdm.tugas_id = t.tugas_id
+      JOIN krs k ON kdm.krs_id = k.krs_id
+      JOIN siswa s ON k.siswa_nis = s.nis
+      WHERE s.user_id = ?
+        AND (kdm.tanggal_pengumpulan IS NULL OR kdm.tanggal_pengumpulan = '')
+    `, [userId]);
+    const tugasBelum = tugasBelumQuery[0].total;
+
+    //Hitung absensi tidak hadir
+    const [absenQuery] = await db.query(`
+      SELECT COUNT(*) AS total
+      FROM absensi a
+      JOIN krs k ON a.krs_id = k.krs_id
+      JOIN siswa s ON k.siswa_nis = s.nis
+      WHERE s.user_id = ?
+        AND a.keterangan IN ('a', 'i', 's')
+    `, [userId]);
+    const absensiTidakHadir = absenQuery[0].total;
+
+    //Hitung tugas terlambat
+    const [tugasTerlambatQuery] = await db.query(`
+      SELECT COUNT(*) AS total
+      FROM krs_detail_materi kdm
+      JOIN tugas t ON kdm.tugas_id = t.tugas_id
+      JOIN krs k ON kdm.krs_id = k.krs_id
+      JOIN siswa s ON k.siswa_nis = s.nis
+      WHERE s.user_id = ?
+        AND kdm.tanggal_pengumpulan > t.tenggat_kumpul
+    `, [userId]);
+    const tugasTerlambat = tugasTerlambatQuery[0].total;
+
+    //Hitung materi hari ini
+    const [materiHariIniQuery] = await db.query(`
+      SELECT COUNT(*) AS total
+      FROM krs_detail_materi kdm
+      JOIN materi m ON kdm.materi_id = m.materi_id
+      JOIN krs k ON kdm.krs_id = k.krs_id
+      JOIN siswa s ON k.siswa_nis = s.nis
+      WHERE DATE(kdm.created_at) = CURDATE()
+        AND s.user_id = ?
+    `, [userId]);
+    const materiHariIni = materiHariIniQuery[0].total;
+
+    //Response
+    res.status(200).json({
+      success: true,
+      data: {
+        tugas_belum_dikerjakan: tugasBelum,
+        absensi_tidak_hadir: absensiTidakHadir,
+        tugas_terlambat: tugasTerlambat,
+        materi_hari_ini: materiHariIni
+      }
+    });
+  } catch (error) {
+    console.error('Error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Gagal mengambil data siswa',
+      error: error.message
+    });
+  }
+};
+
+module.exports = {getBiodataSiswa, getJadwalSiswa, editDataDiriSiswa, getBerita, getMateriSiswa, getTugasSiswa, editTugasSiswa, getBeritaById, getDashboardRingkasanSiswa, getJadwalSiswabyhari, getMateriHariIni, getSiswaCount  };

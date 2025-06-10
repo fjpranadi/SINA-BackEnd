@@ -15,12 +15,14 @@ const {
   getBeritaById, 
   getDashboardRingkasanSiswa, 
   getJadwalSiswabyhari,
-getMateriHariIni 
+  getMateriHariIni,
+  getSiswaCount
 } = require('../controller/dashboardController');
 const uploadtugas = require('../middleware/uploadtugasMiddleware'); 
 const uploadprofile = require('../middleware/uploadProfile'); 
 
 router.get('/dashboard/biodata', verifyToken, getBiodataSiswa);
+router.get('/dashboard/count', verifyToken, getSiswaCount);
 router.get('/dashboard', verifyToken, getDashboardRingkasanSiswa);
 router.get('/dashboard/materi-hari-ini', verifyToken, getMateriHariIni);
 router.get('/dashboard/jadwal', verifyToken, getJadwalSiswa);
@@ -35,7 +37,7 @@ router.get('/dashboard/mapel-kelas', verifyToken, getMapelKelas);
 router.get('/dashboard/jumlahTugasMateri', verifyToken, getJumlahTugasMateri);
 
 // Mapel Detail
-router.get('/dashboard/materi/:mapel_id', verifyToken, getMateri);
+router.get('/dashboard/materi', verifyToken, getMateri);
 router.get('/dashboard/tugas/:mapel_id', verifyToken, getTugas);
 
 // Tugas & Materi Detail routes
