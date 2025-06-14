@@ -5,6 +5,7 @@ const JWT_SECRET = 'token-jwt';
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { ObjectId } = require('bson');
 
 // Helper: deteksi kata berbahaya (jaga-jaga)
 const containsSQLInjection = (input) => {
@@ -48,19 +49,46 @@ const createAdmin = async (req, res) => {
   }
 
   try {
-    const [result] = await db.query(
-      'INSERT INTO user (username, email, password, role) VALUES (?, ?, ?, ?)',
-      [username, email, plainPassword, 'admin']
-    );
+    // Fungsi untuk generate user_id unik (BigInt 15 digit)
+    const generateUniqueId = async (table, column) => {
+      let unique = false;
+      let id;
 
-    const user_id = result.insertId;
+      while (!unique) {
+        id = BigInt('' + Math.floor(1e14 + Math.random() * 9e14)); // 15 digit BigInt
+        const [check] = await db.query(
+          `SELECT ${column} FROM ${table} WHERE ${column} = ?`,
+          [id]
+        );
+        if (check.length === 0) {
+          unique = true;
+        }
+      }
+
+      return id;
+    };
+
+    const user_id = await generateUniqueId('user', 'user_id');
+    const admin_id = await generateUniqueId('admin', 'admin_id');
+
+    // Hash password sebelum disimpan
+    const hashedPassword = await bcrypt.hash(plainPassword, 10);
 
     await db.query(
-      `INSERT INTO admin (user_id, foto_profil, created_at) VALUES (?, ?, ?)`,
-      [user_id, foto_profile, new Date()]
+      'INSERT INTO user (user_id, username, email, password, role) VALUES (?, ?, ?, ?, ?)',
+      [user_id, username, email, hashedPassword, 'admin']
     );
 
-    res.status(200).json({ message: 'Admin berhasil ditambahkan', password: plainPassword });
+    await db.query(
+      `INSERT INTO admin (admin_id, user_id, foto_profil, created_at) VALUES (?, ?, ?, ?)`,
+      [admin_id, user_id, foto_profile, new Date()]
+    );
+
+    res.status(200).json({ 
+      message: 'Admin berhasil ditambahkan', 
+      password: plainPassword, // Kirim password plain hanya sekali ke admin
+      admin_id: admin_id.toString() 
+    });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Gagal menambahkan admin', error: error.message });
@@ -71,7 +99,10 @@ const createAdmin = async (req, res) => {
 const getAllAdmin = async (req, res) => {
   try {
     const [rows] = await db.query(
-      `SELECT a.*, u.username, u.email FROM admin a JOIN user u ON a.user_id = u.user_id`
+      `SELECT a.*, u.username, u.email
+       FROM admin a
+       JOIN user u ON a.user_id = u.user_id
+       WHERE u.role = 'admin'`
     );
     res.json(rows);
   } catch (err) {
@@ -79,6 +110,7 @@ const getAllAdmin = async (req, res) => {
     res.status(500).json({ message: 'Gagal mengambil data admin.' });
   }
 };
+
 
 // GET ADMIN BY ID
 const getAdminbyuser = async (req, res) => {

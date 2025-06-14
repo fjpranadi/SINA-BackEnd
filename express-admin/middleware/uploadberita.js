@@ -2,7 +2,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 
-const storage_berita = multer.diskStorage({
+const storageberita = multer.diskStorage({
   destination: (req, file, cb) => {
     const dir = 'Upload/berita';
     if (!fs.existsSync(dir)) {
@@ -10,12 +10,14 @@ const storage_berita = multer.diskStorage({
     }
     cb(null, dir);
   },
-  filename: (req, file, cb) => {
-  cb(null, file.originalname);
+filename: (req, file, cb) => {
+  const uniqueName = Date.now() + '-' + file.originalname;
+  cb(null, uniqueName);
 }
+
 
 });
 
-const uploadberita = multer({ storage: storage_berita });
+const uploadberita = multer({ storage: storageberita });
 
 module.exports = uploadberita;

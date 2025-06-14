@@ -25,17 +25,45 @@ const getkurikulumlById = async (req, res) => {
 // CREATE mapel
 const createKurikulum = async (req, res) => {
     const { nama_kurikulum, deskripsi } = req.body;
+    const MAX_ATTEMPTS = 5; // Maximum attempts to generate unique ID
+    
     try {
-        const [result] = await db.query(
-            'INSERT INTO kurikulum (nama_kurikulum, deskripsi) VALUES (?, ?)',
-            [nama_kurikulum, deskripsi]
-        );
-        res.status(201).json({ message: 'kurikulum berhasil ditambahkan', kurikulum_id: result.insertId });
+        let attempts = 0;
+        let kurikulum_id;
+        let result;
+        
+        while (attempts < MAX_ATTEMPTS) {
+            // Generate random ID (64-bit integer)
+            kurikulum_id = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
+            
+            try {
+                [result] = await db.query(
+                    'INSERT INTO kurikulum (kurikulum_id, nama_kurikulum, deskripsi) VALUES (?, ?, ?)',
+                    [kurikulum_id, nama_kurikulum, deskripsi]
+                );
+                break; // Success - exit the loop
+            } catch (error) {
+                if (error.code !== 'ER_DUP_ENTRY') {
+                    throw error; // Re-throw if it's not a duplicate ID error
+                }
+                attempts++;
+                if (attempts >= MAX_ATTEMPTS) {
+                    throw new Error('Gagal menghasilkan ID unik setelah beberapa percobaan');
+                }
+            }
+        }
+        
+        res.status(201).json({ 
+            message: 'Kurikulum berhasil ditambahkan', 
+            kurikulum_id: kurikulum_id 
+        });
     } catch (error) {
-        res.status(500).json({ message: 'Gagal menambahkan kurikulum', error });
+        res.status(500).json({ 
+            message: 'Gagal menambahkan kurikulum', 
+            error: error.message 
+        });
     }
 };
-
 // UPDATE mapel
 const updateKurikulum = async (req, res) => {
     const id = req.params.id;

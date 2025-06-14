@@ -1,9 +1,7 @@
-require('dotenv').config();
 const db = require('../database/db');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const JWT_SECRET = process.env.JWT_SECRET;
- // Ganti ini di real project
+const JWT_SECRET = 'token-jwt'; // Ganti ini di real project
 
 // Helper buat cek kata-kata berbahaya
 const containsSQLInjection = (input) => {
@@ -162,8 +160,9 @@ const editProfile = async (req, res) => {
     }
 
     if (file) {
-      await db.query('UPDATE admin SET foto_profil = ? WHERE user_id = ?', [file.originalname, userId]);
-    }
+  // Gunakan file.filename (nama file yang sudah diubah) bukan file.originalname
+  await db.query('UPDATE admin SET foto_profil = ? WHERE user_id = ?', [file.filename, userId]);
+}
     
 
     res.status(200).json({ message: 'Profil berhasil diperbarui!' });
