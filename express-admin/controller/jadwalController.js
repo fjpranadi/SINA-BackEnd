@@ -303,6 +303,68 @@ const hapusJadwal = async (req, res) => {
     res.status(500).json({ message: 'Gagal menghapus jadwal.', error: error.message });
   }
 };
+
+// DELETE - Hapus Semua Jadwal Berdasarkan Kelas ID
+const hapusJadwalByKelasId = async (req, res) => {
+  const { kelas_id } = req.params;
+
+  if (!kelas_id) {
+    return res.status(400).json({ message: 'kelas_id wajib diisi.' });
+  }
+
+  try {
+    // 1. Ambil semua master_jadwal_id yang terkait dengan kelas_id
+    // Ini penting agar kita bisa menghapus entri di tabel master_jadwal juga.
+    const [jadwalRows] = await db.query(
+      `SELECT master_jadwal_id FROM jadwal WHERE kelas_id = ?`,
+      [kelas_id]
+    );
+
+    // Jika tidak ada jadwal yang ditemukan untuk kelas tersebut, kirim respons 404.
+    if (jadwalRows.length === 0) {
+      return res.status(404).json({ message: 'Tidak ada jadwal yang ditemukan untuk kelas ini.' });
+    }
+
+    // Kumpulkan semua ID master_jadwal yang akan dihapus.
+    const masterJadwalIds = jadwalRows.map(j => j.master_jadwal_id);
+
+    // 2. Gunakan transaksi untuk memastikan kedua operasi (delete) berhasil atau tidak sama sekali.
+    await db.query('START TRANSACTION');
+
+    try {
+      // 3. Hapus semua entri dari tabel 'jadwal' yang cocok dengan kelas_id.
+      // Ini sama dengan logika pada Stored Procedure Anda.
+      await db.query(
+        `DELETE FROM jadwal WHERE kelas_id = ?`, 
+        [kelas_id]
+      );
+
+      // 4. Hapus semua entri dari tabel 'master_jadwal' yang terkait.
+      // Ini mencegah data 'master_jadwal' menjadi yatim piatu (orphaned).
+      await db.query(
+        `DELETE FROM master_jadwal WHERE master_jadwal_id IN (?)`,
+        [masterJadwalIds]
+      );
+
+      // 5. Jika kedua operasi berhasil, commit transaksi.
+      await db.query('COMMIT');
+
+      res.status(200).json({ message: `Semua jadwal untuk kelas ID ${kelas_id} berhasil dihapus.` });
+
+    } catch (error) {
+      // Jika terjadi error di tengah transaksi, rollback semua perubahan.
+      await db.query('ROLLBACK');
+      throw error; // Lemparkan error agar ditangkap oleh blok catch luar.
+    }
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ 
+      message: 'Gagal menghapus jadwal berdasarkan kelas.', 
+      error: error.message 
+    });
+  }
+};
  
 module.exports = {
   tambahJadwal,
@@ -310,5 +372,6 @@ module.exports = {
   getJadwalById,
   updateJadwal,
   hapusJadwal,
-  getJadwalByJadwalId
+  getJadwalByJadwalId,
+  hapusJadwalByKelasId
 };

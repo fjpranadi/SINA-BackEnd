@@ -5,11 +5,73 @@ const JWT_SECRET = 'token-jwt';
 const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
+const xlsx = require('xlsx');
 
 // Helper untuk deteksi kata berbahayaa
 const containsSQLInjection = (input) => {
   const forbiddenWords = ['select', 'insert', 'update', 'delete', 'drop', 'alter', 'create', 'replace', 'truncate'];
   return forbiddenWords.some(word => input.toLowerCase().includes(word));
+};
+
+// Helper untuk Format Tanggal
+const formatDateForMySQL = (dateInput) => {
+  // Prioritas 1: Jika input sudah berupa objek Date yang valid
+  if (dateInput instanceof Date && !isNaN(dateInput)) {
+    const year = dateInput.getFullYear();
+    const month = (dateInput.getMonth() + 1).toString().padStart(2, '0');
+    const day = dateInput.getDate().toString().padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  // Prioritas 2: Jika berupa String (dari CSV)
+  if (typeof dateInput === 'string') {
+    // Cek format DD/MM/YYYY
+    const parts = dateInput.split('/');
+    if (parts.length === 3) {
+      const [day, month, year] = parts;
+      // Pastikan semua bagian adalah angka dan valid sebelum menyusun kembali
+      if (!isNaN(day) && !isNaN(month) && !isNaN(year) && year.length === 4) {
+        return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+      }
+    }
+    // Jika format string lain, coba parse dengan new Date()
+    const parsedDate = new Date(dateInput);
+    if (!isNaN(parsedDate)) {
+      return formatDateForMySQL(parsedDate);
+    }
+  }
+
+  // Prioritas 3: Jika berupa Angka (Excel Serial Date)
+  if (typeof dateInput === 'number' && dateInput > 0) {
+    const utc_days = dateInput - 25569;
+    const date = new Date(utc_days * 86400 * 1000);
+    return formatDateForMySQL(date);
+  }
+
+  // Jika semua gagal, kembalikan null
+  return null;
+};
+
+// Helper untuk nomor hp excel
+const formatPhoneNumber = (phone) => {
+  if (!phone) {
+    return null;
+  }
+  // 1. Bersihkan dari semua karakter selain angka
+  const cleaned = String(phone).replace(/\D/g, '');
+
+  // 2. Jika diawali '62' (kode negara), ganti dengan '0'
+  if (cleaned.startsWith('62')) {
+    return '0' + cleaned.substring(2);
+  }
+
+  // 3. Jika tidak diawali '0' (misal: '812...'), tambahkan '0' di depan
+  if (!cleaned.startsWith('0')) {
+    return '0' + cleaned;
+  }
+  
+  // 4. Jika sudah benar (diawali '0'), kembalikan apa adanya
+  return cleaned;
 };
 
 
@@ -480,13 +542,214 @@ const getSiswaBynis = async (req, res) => {
   }
 };
 
+const importSiswaFromExcel = async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ message: "Mohon unggah sebuah file." });
+  }
 
+  const filePath = req.file.path;
+  const conn = await db.getConnection();
 
+  try {
+    let dataFromExcel;
+
+    // --- LOGIKA PEMILIHAN PARSER BERDASARKAN EKSTENSI FILE ---
+    if (req.file.originalname.toLowerCase().endsWith('.csv')) {
+      // Gunakan parser manual yang andal untuk CSV
+      const fileContent = fs.readFileSync(filePath, 'utf8');
+      let cleanContent = fileContent.trim();
+      if (cleanContent.charCodeAt(0) === 0xFEFF) { cleanContent = cleanContent.slice(1); }
+      const rows = cleanContent.split(/\r?\n/);
+      const headers = rows[0].split(',').map(h => h.trim().replace(/"/g, ''));
+      dataFromExcel = [];
+      for (let i = 1; i < rows.length; i++) {
+        if (!rows[i].trim()) continue;
+        const values = rows[i].split(',').map(v => v.trim().replace(/"/g, ''));
+        const rowObject = {};
+        headers.forEach((header, index) => { rowObject[header] = values[index]; });
+        dataFromExcel.push(rowObject);
+      }
+    } else if (req.file.originalname.toLowerCase().endsWith('.xlsx')) {
+      // Gunakan library 'xlsx' dengan opsi yang benar untuk Excel
+      const workbook = xlsx.readFile(filePath);
+      const sheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[sheetName];
+      // OPSI PENTING: raw: false -> membaca nilai yang sudah diformat (teks)
+      // Ini mencegah pembulatan angka besar dan membaca tanggal sebagai string.
+      dataFromExcel = xlsx.utils.sheet_to_json(worksheet, { raw: false });
+    } else {
+      throw new Error('Format file tidak didukung. Harap unggah file .CSV atau .XLSX');
+    }
+
+    if (!dataFromExcel || dataFromExcel.length === 0) {
+        throw new Error("Tidak ada data yang bisa dibaca dari file.");
+    }
+
+    // --- Logika KRS Urut (tidak berubah) ---
+    const [maxKrs] = await conn.query("SELECT MAX(CAST(SUBSTRING(krs_id, 4) AS UNSIGNED)) as max_num FROM krs WHERE krs_id LIKE 'KRS%'");
+    let nextKrsNumber = (maxKrs[0].max_num || 0) + 1;
+
+    const results = { successful: 0, failed: 0, errors: [] };
+
+    for (const row of dataFromExcel) {
+      const newKrsId = `KRS${nextKrsNumber.toString().padStart(4, '0')}`;
+      
+      // Data mapping (tidak berubah)
+      const siswaData = {
+        nis: row['NIS'],
+        nisn: row['NISN'],
+        nama_siswa: row['Nama Siswa'],
+        email: row['Email Siswa'],
+        tanggal_lahir: formatDateForMySQL(row['Tanggal Lahir']),
+        tempat_lahir: row['Tempat Lahir'],
+        alamat: row['Alamat Siswa'],
+        jenis_kelamin: row['Jenis Kelamin'],
+        agama: row['Agama'],
+        no_telepon: formatPhoneNumber(row['No Telepon Siswa']),
+        kelas_id: String(row['ID Kelas']).trim(), // Pastikan ID Kelas selalu string
+        krs_id: newKrsId,
+        filename: null,
+        ayah_nik: row['NIK Ayah'],
+        ayah_nama: row['Nama Ayah'],
+        ayah_email: row['Email Ayah'],
+        ayah_tempat_lahir: row['Tempat Lahir Ayah'],
+        ayah_tanggal_lahir: formatDateForMySQL(row['Tanggal Lahir Ayah']),
+        ayah_alamat: row['Alamat Ayah'],
+        ayah_pekerjaan: row['Pekerjaan Ayah'],
+        ayah_no_telepon: formatPhoneNumber(row['No Telepon Ayah']),
+        ibu_nik: row['NIK Ibu'],
+        ibu_nama: row['Nama Ibu'],
+        ibu_email: row['Email Ibu'],
+        ibu_tempat_lahir: row['Tempat Lahir Ibu'],
+        ibu_tanggal_lahir: formatDateForMySQL(row['Tanggal Lahir Ibu']),
+        ibu_alamat: row['Alamat Ibu'],
+        ibu_pekerjaan: row['Pekerjaan Ibu'],
+        ibu_no_telepon: formatPhoneNumber(row['No Telepon Ibu']),
+      };
+
+      await conn.beginTransaction();
+      try {
+        await _createSiswaWithParentsTransaction(siswaData, conn);
+        await conn.commit();
+        results.successful++;
+        nextKrsNumber++;
+      } catch (error) {
+        await conn.rollback();
+        results.failed++;
+        results.errors.push({ nis: siswaData.nis || `ROW_${results.successful + results.failed}`, reason: error.message });
+      }
+    }
+
+    res.status(200).json({ message: "Proses impor selesai.", ...results });
+
+  } catch (error) {
+    console.error('Error saat impor:', error);
+    res.status(500).json({ message: "Gagal memproses file.", error: error.message });
+  } finally {
+    fs.unlinkSync(filePath);
+    conn.release();
+  }
+};
+
+const _createSiswaWithParentsTransaction = async (data, conn) => {
+  // Ambil semua data yang dibutuhkan dari objek 'data'
+  const {
+      email, nama_siswa, nis, nisn, tanggal_lahir, tempat_lahir, alamat, jenis_kelamin,
+      agama, no_telepon, kelas_id, filename, // filename didapat dari pemanggil
+      ayah_nik, ayah_nama, ayah_email, ayah_no_telepon, ayah_tanggal_lahir, ayah_tempat_lahir, ayah_alamat, ayah_pekerjaan,
+      ibu_nik, ibu_nama, ibu_email, ibu_no_telepon, ibu_tanggal_lahir, ibu_tempat_lahir, ibu_alamat, ibu_pekerjaan,
+      wali_nik, wali_nama, wali_email, wali_no_telepon, wali_tanggal_lahir, wali_tempat_lahir, wali_alamat, wali_pekerjaan
+  } = data;
+
+  const userPassword = bcrypt.hashSync('siswa123', 10);
+  const ortuPassword = bcrypt.hashSync('ortu123', 10);
+  const usernameFromEmail = email.split('@')[0];
+
+  // Validasi kelas_id
+  const [cekKelas] = await conn.query(`SELECT * FROM kelas WHERE kelas_id = ?`, [kelas_id]);
+  if (cekKelas.length === 0) {
+      throw new Error(`Kelas dengan ID ${kelas_id} tidak ditemukan.`);
+  }
+
+  // 1. Insert user siswa
+  const siswaUserId = await generateUniqueUserId(conn);
+  await conn.query(`INSERT INTO user (user_id, username, email, password, role, created_at) VALUES (?, ?, ?, ?, 'siswa', NOW())`,
+      [siswaUserId.toString(), usernameFromEmail, email, userPassword]);
+
+  // 2. Insert siswa
+  await conn.query(`INSERT INTO siswa (nis, user_id, nisn, nama_siswa, tanggal_lahir, tempat_lahir, alamat, jenis_kelamin, agama, no_telepon, foto_profil, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+      [nis, siswaUserId.toString(), nisn, nama_siswa, tanggal_lahir, tempat_lahir, alamat, jenis_kelamin, agama, no_telepon, filename]);
+
+  // 3. Insert data KRS
+  const [lastKrs] = await conn.query(`
+    SELECT krs_id FROM krs 
+    WHERE krs_id LIKE 'KRS%'
+    ORDER BY CAST(SUBSTRING(krs_id, 4) AS UNSIGNED) DESC
+    LIMIT 1
+  `);
+
+  let newKrsNumber = 1; // Default jika tidak ada data
+  
+  if (lastKrs.length > 0) {
+    // Ekstrak angka dari krs_id terakhir
+    const lastKrsId = lastKrs[0].krs_id;
+    const lastNumber = parseInt(lastKrsId.replace('KRS', ''), 10);
+    
+    if (!isNaN(lastNumber)) {
+      newKrsNumber = lastNumber + 1;
+    }
+  }
+
+  // Format dengan leading zeros (4 digit)
+  const newKrsId = 'KRS' + newKrsNumber.toString().padStart(4, '0');
+
+  await conn.query(
+    `INSERT INTO krs (krs_id, siswa_nis, kelas_id, status_pembayaran, created_at) 
+     VALUES (?, ?, ?, 0, NOW())`, 
+    [newKrsId, nis, kelas_id]
+  );
+  // === AYAH ===
+  const ayahUserId = await generateUniqueUserId(conn);
+  await conn.query(`INSERT INTO user (user_id, username, email, password, role, created_at) VALUES (?, ?, ?, ?, 'ortu', NOW())`,
+      [ayahUserId.toString(), ayah_no_telepon, ayah_email, ortuPassword]);
+  await conn.query(`INSERT INTO ortu (nik, user_id, nama_ortu, alamat, status_ortu, pekerjaan, tempat_lahir_ortu, tanggal_lahir_ortu, no_telepon, created_at) VALUES (?, ?, ?, ?, 'ayah', ?, ?, ?, ?, NOW())`,
+      [ayah_nik, ayahUserId.toString(), ayah_nama, ayah_alamat, ayah_pekerjaan, ayah_tempat_lahir, ayah_tanggal_lahir, ayah_no_telepon]);
+  await conn.query(`INSERT INTO siswa_ortu (nis, nik, created_at) VALUES (?, ?, NOW())`, [nis, ayah_nik]);
+
+  // === IBU ===
+  const ibuUserId = await generateUniqueUserId(conn);
+  await conn.query(`INSERT INTO user (user_id, username, email, password, role, created_at) VALUES (?, ?, ?, ?, 'ortu', NOW())`,
+      [ibuUserId.toString(), ibu_no_telepon, ibu_email, ortuPassword]);
+  await conn.query(`INSERT INTO ortu (nik, user_id, nama_ortu, alamat, status_ortu, pekerjaan, tempat_lahir_ortu, tanggal_lahir_ortu, no_telepon, created_at) VALUES (?, ?, ?, ?, 'ibu', ?, ?, ?, ?, NOW())`,
+      [ibu_nik, ibuUserId.toString(), ibu_nama, ibu_alamat, ibu_pekerjaan, ibu_tempat_lahir, ibu_tanggal_lahir, ibu_no_telepon]);
+  await conn.query(`INSERT INTO siswa_ortu (nis, nik, created_at) VALUES (?, ?, NOW())`, [nis, ibu_nik]);
+
+  // === WALI (jika ada) ===
+  let waliUserId = null;
+  if (wali_nik && wali_nama && wali_email) {
+      waliUserId = await generateUniqueUserId(conn);
+      await conn.query(`INSERT INTO user (user_id, username, email, password, role, created_at) VALUES (?, ?, ?, ?, 'ortu', NOW())`,
+          [waliUserId.toString(), wali_no_telepon, wali_email, ortuPassword]);
+      await conn.query(`INSERT INTO ortu (nik, user_id, nama_ortu, alamat, status_ortu, pekerjaan, tempat_lahir_ortu, tanggal_lahir_ortu, no_telepon, created_at) VALUES (?, ?, ?, ?, 'wali', ?, ?, ?, ?, NOW())`,
+          [wali_nik, waliUserId.toString(), wali_nama, wali_alamat, wali_pekerjaan, wali_tempat_lahir, wali_tanggal_lahir, wali_no_telepon]);
+      await conn.query(`INSERT INTO siswa_ortu (nis, nik, created_at) VALUES (?, ?, NOW())`, [nis, wali_nik]);
+  }
+
+  // Kembalikan ID yang dibuat untuk keperluan response
+  const created_ids = {
+      siswa: siswaUserId.toString(),
+      ayah: ayahUserId.toString(),
+      ibu: ibuUserId.toString(),
+      wali: waliUserId ? waliUserId.toString() : null,
+  };
+  return created_ids;
+};
 
 module.exports = {
   tambahSiswa,
   getAllSiswa,
   updateSiswa,
   deleteSiswa,
-  getSiswaBynis
+  getSiswaBynis,
+  importSiswaFromExcel
 };
