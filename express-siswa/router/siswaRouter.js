@@ -20,6 +20,7 @@ const {
 } = require('../controller/dashboardController');
 const uploadtugas = require('../middleware/uploadtugasMiddleware'); 
 const uploadprofile = require('../middleware/uploadProfile'); 
+const { getListRapor, getSemesterOptions, getStatistikNilai } = require('../controller/raporController');
 
 router.get('/dashboard/biodata', verifyToken, getBiodataSiswa);
 router.get('/dashboard/count', verifyToken, getSiswaCount);
@@ -47,5 +48,10 @@ router.get('/dashboard/tugasDetail/:tugas_id', verifyToken, getTugasDetail);
 // Riwayat Absensi
 router.get('/dashboard/absensi', verifyToken, getAbsensi);
 router.get('/dashboard/ringkasan', verifyToken, getRingkasanAbsensi);
+
+// Rapor
+router.get('/dashboard/rapor', verifyToken, getListRapor);
+router.get('/dashboard/rapor/semester-options', verifyToken, getSemesterOptions);
+router.get('/dashboard/rapor/statistik', verifyToken, getStatistikNilai);
 
 module.exports = router;

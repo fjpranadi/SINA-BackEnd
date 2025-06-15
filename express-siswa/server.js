@@ -1,7 +1,6 @@
 
 const express = require('express');
 const app = express();
-const cors = require('cors');
 const siswaRouter = require('./router/siswaRouter');
 const path = require('path');
 require('dotenv').config();
@@ -12,12 +11,6 @@ app.use('/Upload/profile_image', express.static(path.join(__dirname, 'Upload/pro
 
 app.use('/Upload/tugas', express.static(path.join(__dirname, 'Upload/tugas')));
 
-// PASANG CORS DI SINI
-app.use(cors({
-  origin: 'http://localhost:5173', // sesuaikan dengan frontend kamu
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  credentials: true
-}));
 
 app.use(express.json());
 app.use('/api', siswaRouter);
