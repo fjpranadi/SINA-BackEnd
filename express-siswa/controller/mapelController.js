@@ -87,57 +87,71 @@ const getMapelKelas = async (req, res) => {
   }
 };
 
+// GET materi dan tugas
 const getMateri = async (req, res) => {
   try {
-    const userId = req.user?.userId;
-    if (!userId) {
-      return res.status(401).json({
-        success: false,
-        message: 'User ID tidak ditemukan di JWT'
-      });
-    }
+    const userId = req.user.userId;
+    const { mapel_id } = req.params;
 
-    // Pastikan siswa ada
-    const [[siswa]] = await db.query(
-      'SELECT nis FROM siswa WHERE user_id = ?',
-      [userId]
-    );
+    // Ambil NIS siswa berdasarkan userId
+    const [[siswa]] = await db.query('SELECT nis FROM siswa WHERE user_id = ?', [userId]);
     if (!siswa) {
-      return res.status(404).json({
-        success: false,
-        message: 'Data siswa tidak ditemukan'
-      });
+      return res.status(404).json({ status: 404, message: 'Siswa tidak ditemukan.' });
+    }
+    const nis = siswa.nis;
+
+    // Ambil semua mapel dan krs_id yang terkait siswa tersebut
+    const [mapelKrsList] = await db.query(`
+      SELECT kd.mapel_id, kd.krs_id
+      FROM krs_detail kd
+      JOIN krs k ON kd.krs_id = k.krs_id
+      WHERE k.siswa_nis = ?
+    `, [nis]);
+
+    if (mapelKrsList.length === 0) {
+      return res.status(404).json({ status: 404, message: 'Tidak ada mapel yang terkait dengan siswa.' });
     }
 
-    // Ambil materi yang diambil siswa
-    const [materiQuery] = await db.query(`
-      SELECT 
+    // Filter mapel_id dari params
+    let filteredMapelKrsList = mapelKrsList;
+    if (mapel_id) {
+      filteredMapelKrsList = mapelKrsList.filter(m => m.mapel_id == mapel_id);
+      if (filteredMapelKrsList.length === 0) {
+        return res.status(404).json({ status: 404, message: 'Mapel tidak ditemukan untuk siswa ini.' });
+      }
+    }
+
+    const mapelIds = filteredMapelKrsList.map(m => m.mapel_id);
+    const krsIds = filteredMapelKrsList.map(m => m.krs_id);
+
+    // Query materi yang relevan melalui krs_detail_materi
+    const [materiRows] = await db.query(`
+      SELECT
         m.materi_id,
         m.nama_materi,
         m.uraian,
+        m.lampiran,
         m.created_at,
         mp.nama_mapel,
         kls.nama_kelas
-      FROM krs_detail_materi kdm
-      JOIN materi m ON kdm.materi_id = m.materi_id
-      JOIN mapel mp ON kdm.mapel_id = mp.mapel_id
-      JOIN krs k ON kdm.krs_id = k.krs_id
-      JOIN kelas kls ON k.kelas_id = kls.kelas_id
-      JOIN siswa s ON k.siswa_nis = s.nis
-      WHERE s.user_id = ?
-    `, [userId]);
+      FROM materi m
+      JOIN krs_detail_materi kdm ON m.materi_id = kdm.materi_id
+      JOIN krs_detail kd ON kdm.krs_id = kd.krs_id AND kdm.mapel_id = kd.mapel_id
+      JOIN mapel mp ON kd.mapel_id = mp.mapel_id
+      JOIN krs kr ON kd.krs_id = kr.krs_id
+      JOIN kelas kls ON kr.kelas_id = kls.kelas_id
+      WHERE kd.mapel_id IN (?) AND kd.krs_id IN (?)
+      ORDER BY m.created_at DESC
+    `, [mapelIds, krsIds]);
 
     res.status(200).json({
-      success: true,
-      data: materiQuery
+      status: 200,
+      data: materiRows
     });
-  } catch (error) {
-    console.error('Error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Gagal mengambil data materi',
-      error: error.message
-    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ status: 500, message: 'Gagal mengambil data materi.' });
   }
 };
 

@@ -477,62 +477,170 @@ const editTugasSiswa = async (req, res) => {
 
 const getDashboardRingkasanSiswa = async (req, res) => {
   const userId = req.user.userId;
+  const today = new Date();
+  const todayDateString = today.toISOString().split('T')[0];
+  const threeDaysAgo = new Date();
+  threeDaysAgo.setDate(today.getDate() - 3);
+  const hariIni = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'][today.getDay()];
 
   try {
-    // 1. Ambil NIS siswa
+    // 1. Ambil data siswa dan krs_id
     const [[siswa]] = await db.query('SELECT nis FROM siswa WHERE user_id = ?', [userId]);
-    if (!siswa) {
-      return res.status(404).json({ message: 'Data siswa tidak ditemukan' });
-    }
+    if (!siswa) return res.status(404).json({ message: 'Data siswa tidak ditemukan' });
 
-    // 2. Ambil krs_id dan kelas_id
     const [[krs]] = await db.query('SELECT krs_id, kelas_id FROM krs WHERE siswa_nis = ? LIMIT 1', [siswa.nis]);
-    if (!krs) {
-      return res.status(404).json({ message: 'KRS tidak ditemukan' });
-    }
+    if (!krs) return res.status(404).json({ message: 'KRS siswa tidak ditemukan' });
 
-    // 3. Tugas belum dikerjakan (tanggal_pengumpulan IS NULL)
-   const [[belumDikerjakan]] = await db.query(`
-  SELECT COUNT(DISTINCT materi_id) AS total
-  FROM krs_detail_materi
-  WHERE krs_id = ?
-    AND tanggal_pengumpulan IS NULL
-`, [krs.krs_id]);
+    // 2. Hitung statistik
+    const [[tugasBelumDikerjakan]] = await db.query(`
+      SELECT COUNT(*) as count 
+      FROM krs_detail_materi kdm
+      JOIN tugas t ON kdm.tugas_id = t.tugas_id
+      WHERE kdm.krs_id = ? 
+        AND kdm.tanggal_pengumpulan IS NULL
+        AND t.tenggat_kumpul >= ?
+    `, [krs.krs_id, today]);
 
-    // 4. Tugas terlambat (tanggal_pengumpulan > tenggat_kumpul)
-    const [[terlambat]] = await db.query(`
-      SELECT COUNT(*) AS total
-FROM krs_detail_materi kdm
-JOIN tugas t ON kdm.tugas_id = t.tugas_id
-WHERE kdm.krs_id = ?
-  AND kdm.tanggal_pengumpulan IS NOT NULL
-  AND kdm.tanggal_pengumpulan > t.tenggat_kumpul
+    const [[tugasTerlambat]] = await db.query(`
+      SELECT COUNT(*) as count 
+      FROM krs_detail_materi kdm
+      JOIN tugas t ON kdm.tugas_id = t.tugas_id
+      WHERE kdm.krs_id = ? 
+        AND kdm.tanggal_pengumpulan IS NOT NULL
+        AND kdm.tanggal_pengumpulan > t.tenggat_kumpul
     `, [krs.krs_id]);
 
-    // 5. Absensi tidak hadir (izin, sakit, alpha)
-    const [[absensi]] = await db.query(`
+    const [[tugasMelewatiTenggat]] = await db.query(`
+      SELECT COUNT(*) as count 
+      FROM krs_detail_materi kdm
+      JOIN tugas t ON kdm.tugas_id = t.tugas_id
+      WHERE kdm.krs_id = ? 
+        AND kdm.tanggal_pengumpulan IS NULL
+        AND t.tenggat_kumpul < ?
+    `, [krs.krs_id, today]);
+
+    const [[absensiTidakHadir]] = await db.query(`
+      SELECT COUNT(*) as count 
+      FROM absensi 
+      WHERE krs_id = ? 
+        AND keterangan != 'h'
+    `, [krs.krs_id]);
+
+    const [[materiHariIniCount]] = await db.query(`
+      SELECT COUNT(*) as count
+      FROM krs_detail_materi kdm
+      JOIN materi m ON kdm.materi_id = m.materi_id
+      WHERE kdm.krs_id = ?
+        AND DATE(m.created_at) = ?
+    `, [krs.krs_id, todayDateString]);
+
+    // 3. Ambil materi hari ini (3 terbaru)
+    const [materiHariIni] = await db.query(`
       SELECT 
-        SUM(keterangan = 'i' OR keterangan = 's' OR keterangan = 'a') AS tidak_hadir
-      FROM absensi
-      WHERE krs_id = ?
-    `, [krs.krs_id]);
+        m.materi_id,
+        m.nama_materi, 
+        m.uraian, 
+        m.lampiran,
+        mp.nama_mapel,
+        m.created_at
+      FROM krs_detail_materi kdm
+      JOIN materi m ON kdm.materi_id = m.materi_id
+      JOIN krs_detail kd ON kdm.krs_id = kd.krs_id AND kdm.mapel_id = kd.mapel_id
+      JOIN mapel mp ON kd.mapel_id = mp.mapel_id
+      WHERE kdm.krs_id = ?
+        AND DATE(m.created_at) = ?
+      ORDER BY m.created_at DESC
+      LIMIT 3
+    `, [krs.krs_id, todayDateString]);
 
+    // 4. Ambil tugas terbaru (tanpa data guru)
+    const [tugasTerbaru] = await db.query(`
+      SELECT 
+        t.tugas_id,
+        t.judul,
+        t.deskripsi,
+        t.lampiran AS lampiran_tugas,
+        t.tenggat_kumpul,
+        t.created_at,
+        mp.nama_mapel,
+        kdm.file_jawaban,
+        kdm.tanggal_pengumpulan,
+        kdm.nilai,
+        kdm.uraian AS uraian_jawaban
+      FROM tugas t
+      JOIN krs_detail_materi kdm ON t.tugas_id = kdm.tugas_id
+      JOIN krs_detail kd ON kdm.krs_id = kd.krs_id AND kdm.mapel_id = kd.mapel_id
+      JOIN mapel mp ON kd.mapel_id = mp.mapel_id
+      WHERE kdm.krs_id = ?
+        AND t.created_at >= ?
+      ORDER BY t.created_at DESC
+      LIMIT 3
+    `, [krs.krs_id, threeDaysAgo]);
 
-    // Kirim response
+    // Format tugas
+    const tugasTerbaruFormatted = tugasTerbaru.map(tugas => {
+      let status = 'Belum Dikerjakan';
+      if (tugas.tanggal_pengumpulan) {
+        status = tugas.tanggal_pengumpulan > tugas.tenggat_kumpul ? 'Terlambat' : 'Tepat Waktu';
+      } else if (tugas.tenggat_kumpul < today) {
+        status = 'Melewati Tenggat';
+      }
+      return {
+        id: tugas.tugas_id,
+        judul: tugas.judul,
+        deskripsi: tugas.deskripsi,
+        mapel: tugas.nama_mapel,
+        lampiran_guru: tugas.lampiran_tugas,
+        tenggat_kumpul: tugas.tenggat_kumpul,
+        dikumpulkan_pada: tugas.tanggal_pengumpulan,
+        file_jawaban: tugas.file_jawaban,
+        uraian_jawaban: tugas.uraian_jawaban,
+        nilai: tugas.nilai,
+        status: status,
+        dibuat_pada: tugas.created_at
+      };
+    });
+
+    // 5. Ambil kelas hari ini (tanpa data guru)
+    const [kelasHariIni] = await db.query(`
+      SELECT 
+        m.nama_mapel,
+        mj.start,
+        mj.finish,
+        j.ruangan
+      FROM jadwal j
+      JOIN master_jadwal mj ON j.master_jadwal_id = mj.master_jadwal_id
+      JOIN mapel m ON j.mapel_id = m.mapel_id
+      WHERE j.kelas_id = ?
+        AND j.hari = ?
+      ORDER BY mj.start ASC
+    `, [krs.kelas_id, hariIni]);
+
+    // 6. Response akhir
     res.status(200).json({
+      message: 'Ringkasan dashboard siswa berhasil diambil',
       status: 200,
       data: {
-        tugas_belum_dikerjakan: belumDikerjakan.total || 0,
-        tugas_terlambat: terlambat.total || 0,
-        absensi_tidak_hadir: absensi.tidak_hadir || 0,
+        ringkasan: {
+          tugas_belum_dikerjakan: tugasBelumDikerjakan.count,
+          tugas_terlambat: tugasTerlambat.count + tugasMelewatiTenggat.count,
+          absensi_tidak_hadir: absensiTidakHadir.count,
+          materi_hari_ini: materiHariIniCount.count
+        },
+        materi_hari_ini: materiHariIni,
+        tugas_terbaru: tugasTerbaruFormatted,
+        kelas_hari_ini: kelasHariIni.map(kelas => ({
+          nama_mapel: kelas.nama_mapel,
+          jam: `${kelas.start} - ${kelas.finish}`,
+          ruangan: kelas.ruangan
+        }))
       }
     });
 
   } catch (err) {
     console.error(err);
     res.status(500).json({
-      status: 500,
-      message: 'Gagal mengambil ringkasan dashboard',
+      message: 'Gagal mengambil ringkasan dashboard siswa',
       error: err.message
     });
   }
@@ -596,96 +704,179 @@ const getMateriHariIni = async (req, res) => {
   }
 };
 
-const getSiswaCount = async (req, res) => {
+const getStatistikNilaiSiswa = async (req, res) => {
+  const userId = req.user.userId; // ID user dari token
+  const { tahun_akademik_id } = req.params; // ID tahun akademik dari parameter
+
   try {
-    //Ambil userId dari JWT
-    const userId = req.user?.userId;
-
-    //Pastikan userId terbaca
-    if (!userId) {
-      return res.status(401).json({
-        success: false,
-        message: 'User ID tidak ditemukan di JWT'
-      });
-    }
-
-    //Ambil NIS siswa dari user_id
-    const [[siswa]] = await db.query(
-      'SELECT nis FROM siswa WHERE user_id = ?',
-      [userId]
-    );
+    // 1. Ambil data siswa berdasarkan user ID
+    const [[siswa]] = await db.query('SELECT nis FROM siswa WHERE user_id = ?', [userId]);
     if (!siswa) {
-      return res.status(404).json({
-        success: false,
-        message: 'Data siswa tidak ditemukan'
+      return res.status(404).json({ message: 'Data siswa tidak ditemukan' });
+    }
+
+    // 2. Ambil KRS siswa untuk tahun akademik tertentu
+    const [krsList] = await db.query(`
+      SELECT k.krs_id, k.kelas_id, k.siswa_nis, k.created_at
+      FROM krs k
+      JOIN kelas kl ON k.kelas_id = kl.kelas_id
+      WHERE k.siswa_nis = ?
+        AND kl.tahun_akademik_id = ?
+    `, [siswa.nis, tahun_akademik_id]);
+
+    if (krsList.length === 0) {
+      return res.status(404).json({ 
+        message: 'Data KRS tidak ditemukan untuk tahun akademik ini' 
       });
     }
 
-    //Hitung tugas belum dikerjakan
-    const [tugasBelumQuery] = await db.query(`
-      SELECT COUNT(*) AS total
-      FROM krs_detail_materi kdm
-      JOIN tugas t ON kdm.tugas_id = t.tugas_id
-      JOIN krs k ON kdm.krs_id = k.krs_id
-      JOIN siswa s ON k.siswa_nis = s.nis
-      WHERE s.user_id = ?
-        AND (kdm.tanggal_pengumpulan IS NULL OR kdm.tanggal_pengumpulan = '')
-    `, [userId]);
-    const tugasBelum = tugasBelumQuery[0].total;
+    // 3. Ambil semua nilai dari krs_detail untuk KRS yang ditemukan
+    const [nilaiList] = await db.query(`
+      SELECT 
+        kd.mapel_id,
+        m.nama_mapel,
+        kd.nilai,
+        kd.keterampilan,
+        kd.kkm,
+        ROUND((kd.nilai + kd.keterampilan) / 2, 2) AS nilai_akhir,
+        CASE 
+          WHEN (kd.nilai + kd.keterampilan) / 2 >= kd.kkm THEN 'Tuntas'
+          ELSE 'Belum Tuntas'
+        END AS status,
+        kd.created_at
+      FROM krs_detail kd
+      JOIN mapel m ON kd.mapel_id = m.mapel_id
+      WHERE kd.krs_id IN (?)
+      ORDER BY m.nama_mapel ASC
+    `, [krsList.map(krs => krs.krs_id)]);
 
-    //Hitung absensi tidak hadir
-    const [absenQuery] = await db.query(`
-      SELECT COUNT(*) AS total
-      FROM absensi a
-      JOIN krs k ON a.krs_id = k.krs_id
-      JOIN siswa s ON k.siswa_nis = s.nis
-      WHERE s.user_id = ?
-        AND a.keterangan IN ('a', 'i', 's')
-    `, [userId]);
-    const absensiTidakHadir = absenQuery[0].total;
+    // 4. Hitung statistik umum
+    let totalMapel = nilaiList.length;
+    let totalTuntas = nilaiList.filter(n => n.status === 'Tuntas').length;
+    let totalBelumTuntas = totalMapel - totalTuntas;
+    let rataRataNilai = 0;
+    let rataRataKeterampilan = 0;
+    let rataRataAkhir = 0;
 
-    //Hitung tugas terlambat
-    const [tugasTerlambatQuery] = await db.query(`
-      SELECT COUNT(*) AS total
-      FROM krs_detail_materi kdm
-      JOIN tugas t ON kdm.tugas_id = t.tugas_id
-      JOIN krs k ON kdm.krs_id = k.krs_id
-      JOIN siswa s ON k.siswa_nis = s.nis
-      WHERE s.user_id = ?
-        AND kdm.tanggal_pengumpulan > t.tenggat_kumpul
-    `, [userId]);
-    const tugasTerlambat = tugasTerlambatQuery[0].total;
+    if (totalMapel > 0) {
+      rataRataNilai = nilaiList.reduce((sum, n) => sum + n.nilai, 0) / totalMapel;
+      rataRataKeterampilan = nilaiList.reduce((sum, n) => sum + n.keterampilan, 0) / totalMapel;
+      rataRataAkhir = nilaiList.reduce((sum, n) => sum + n.nilai_akhir, 0) / totalMapel;
+    }
 
-    //Hitung materi hari ini
-    const [materiHariIniQuery] = await db.query(`
-      SELECT COUNT(*) AS total
-      FROM krs_detail_materi kdm
-      JOIN materi m ON kdm.materi_id = m.materi_id
-      JOIN krs k ON kdm.krs_id = k.krs_id
-      JOIN siswa s ON k.siswa_nis = s.nis
-      WHERE DATE(kdm.created_at) = CURDATE()
-        AND s.user_id = ?
-    `, [userId]);
-    const materiHariIni = materiHariIniQuery[0].total;
-
-    //Response
+    // 5. Format response
     res.status(200).json({
-      success: true,
+      message: 'Statistik nilai siswa berhasil diambil',
+      status: 200,
       data: {
-        tugas_belum_dikerjakan: tugasBelum,
-        absensi_tidak_hadir: absensiTidakHadir,
-        tugas_terlambat: tugasTerlambat,
-        materi_hari_ini: materiHariIni
+        tahun_akademik_id,
+        statistik_umum: {
+          total_mapel: totalMapel,
+          total_tuntas: totalTuntas,
+          total_belum_tuntas: totalBelumTuntas,
+          rata_rata_nilai: parseFloat(rataRataNilai.toFixed(2)),
+          rata_rata_keterampilan: parseFloat(rataRataKeterampilan.toFixed(2)),
+          rata_rata_nilai_akhir: parseFloat(rataRataAkhir.toFixed(2))
+        },
+        detail_nilai: nilaiList.map(n => ({
+          mapel_id: n.mapel_id,
+          nama_mapel: n.nama_mapel,
+          nilai_pengetahuan: n.nilai,
+          nilai_keterampilan: n.keterampilan,
+          nilai_akhir: n.nilai_akhir,
+          kkm: n.kkm,
+          status: n.status
+        }))
       }
     });
-  } catch (error) {
-    console.error('Error:', error);
+
+  } catch (err) {
+    console.error(err);
     res.status(500).json({
-      success: false,
-      message: 'Gagal mengambil data siswa',
-      error: error.message
+      message: 'Gagal mengambil statistik nilai siswa',
+      error: err.message
     });
   }
 };
 
-module.exports = {getBiodataSiswa, getJadwalSiswa, editDataDiriSiswa, getBerita, getMateriSiswa, getTugasSiswa, editTugasSiswa, getBeritaById, getDashboardRingkasanSiswa, getJadwalSiswabyhari, getMateriHariIni, getSiswaCount  };
+const getDetailKelas = async (req, res) => {
+  const userId = req.user.userId; // ID user dari token
+
+  try {
+    // 1. Ambil data siswa berdasarkan user ID
+    const [[siswa]] = await db.query('SELECT nis FROM siswa WHERE user_id = ?', [userId]);
+    if (!siswa) {
+      return res.status(404).json({ message: 'Data siswa tidak ditemukan' });
+    }
+
+    // 2. Ambil data KRS terbaru siswa
+    const [[krs]] = await db.query(`
+      SELECT k.krs_id, k.kelas_id, k.created_at
+      FROM krs k
+      WHERE k.siswa_nis = ?
+      ORDER BY k.created_at DESC
+      LIMIT 1
+    `, [siswa.nis]);
+
+    if (!krs) {
+      return res.status(404).json({ message: 'Siswa belum terdaftar di kelas manapun' });
+    }
+
+    // 3. Ambil detail kelas
+    const [[kelas]] = await db.query(`
+      SELECT 
+        kl.kelas_id,
+        kl.nama_kelas,
+        kl.tingkat,
+        kl.jenjang,
+        ta.tahun_akademik_id,
+        ta.tahun_mulai,
+        ta.tahun_berakhir,
+        kr.nama_kurikulum,
+        g.nama_guru AS wali_kelas,
+        g.foto_profil AS foto_wali_kelas
+      FROM kelas kl
+      JOIN tahun_akademik ta ON kl.tahun_akademik_id = ta.tahun_akademik_id
+      JOIN kurikulum kr ON kl.kurikulum_id = kr.kurikulum_id
+      LEFT JOIN guru g ON kl.guru_nip = g.nip
+      WHERE kl.kelas_id = ?
+    `, [krs.kelas_id]);
+
+    if (!kelas) {
+      return res.status(404).json({ message: 'Data kelas tidak ditemukan' });
+    }
+
+    // 4. Format response
+    res.status(200).json({
+      message: 'Detail kelas berhasil diambil',
+      status: 200,
+      data: {
+        id: kelas.kelas_id,
+        nama_kelas: kelas.nama_kelas,
+        tingkat: kelas.tingkat,
+        jenjang: kelas.jenjang,
+        tahun_akademik: {
+          id: kelas.tahun_akademik_id,
+          periode: `${new Date(kelas.tahun_mulai).getFullYear()}/${new Date(kelas.tahun_berakhir).getFullYear()}`,
+          tahun_mulai: kelas.tahun_mulai,
+          tahun_berakhir: kelas.tahun_berakhir,
+          status: new Date() >= new Date(kelas.tahun_berakhir) ? 'Selesai' : 'Aktif'
+        },
+        kurikulum: kelas.nama_kurikulum,
+        wali_kelas: {
+          nama: kelas.wali_kelas,
+          foto_profil: kelas.foto_wali_kelas
+        }
+      }
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      message: 'Gagal mengambil detail kelas',
+      error: err.message
+    });
+  }
+};
+
+module.exports = {getBiodataSiswa, getJadwalSiswa, editDataDiriSiswa, getBerita, getMateriSiswa, getTugasSiswa, editTugasSiswa, getBeritaById, getDashboardRingkasanSiswa, getJadwalSiswabyhari, getMateriHariIni, getStatistikNilaiSiswa, getDetailKelas  };
