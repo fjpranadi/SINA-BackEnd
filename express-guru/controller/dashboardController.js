@@ -389,6 +389,156 @@ const createTugasForSiswa = async (req, res) => {
   }
 };
 
+const updateTugasById = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { tugas_id } = req.params;
+    const { judul, deskripsi, tenggat_kumpul } = req.body;
+    const lampiran = req.file ? req.file.filename : null;
+
+    // Ambil NIP guru
+    const [teacher] = await db.query(
+      `SELECT nip FROM guru WHERE user_id = ?`,
+      [userId]
+    );
+
+    if (!teacher.length) {
+      if (req.file) fs.unlinkSync(req.file.path);
+      return res.status(404).json({ success: false, message: 'Guru tidak ditemukan' });
+    }
+
+    const guru_nip = teacher[0].nip;
+
+    // Verifikasi tugas milik guru
+    const [check] = await db.query(`
+      SELECT t.lampiran
+      FROM tugas t
+      JOIN krs_detail_materi kdm ON t.tugas_id = kdm.tugas_id
+      JOIN krs_detail kd ON kdm.krs_id = kd.krs_id
+      WHERE t.tugas_id = ?
+      AND kd.guru_nip = ?
+      LIMIT 1
+    `, [tugas_id, guru_nip]);
+
+    if (!check.length) {
+      if (req.file) fs.unlinkSync(req.file.path);
+      return res.status(403).json({ success: false, message: 'Tugas tidak ditemukan atau Anda tidak memiliki akses' });
+    }
+
+    // Hapus lampiran lama jika ada dan diganti
+    if (lampiran && check[0].lampiran) {
+      const oldPath = path.join(__dirname, '../../express-admin/Upload/profile_image', check[0].lampiran);
+      if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+    }
+
+    // Bangun query update
+    const fields = [];
+    const values = [];
+
+    if (judul) {
+      fields.push('judul = ?');
+      values.push(judul);
+    }
+    if (deskripsi) {
+      fields.push('deskripsi = ?');
+      values.push(deskripsi);
+    }
+    if (tenggat_kumpul) {
+      fields.push('tenggat_kumpul = ?');
+      values.push(tenggat_kumpul);
+    }
+    if (lampiran) {
+      fields.push('lampiran = ?');
+      values.push(lampiran);
+    }
+
+    if (!fields.length) {
+      return res.status(400).json({ success: false, message: 'Tidak ada data yang diperbarui' });
+    }
+
+    values.push(tugas_id);
+
+    await db.query(`UPDATE tugas SET ${fields.join(', ')} WHERE tugas_id = ?`, values);
+
+    res.status(200).json({
+      success: true,
+      message: 'Tugas berhasil diperbarui',
+      data: { tugas_id, updated_fields: fields }
+    });
+
+  } catch (error) {
+    if (req.file) fs.unlinkSync(req.file.path);
+    console.error('Error update tugas:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Gagal memperbarui tugas',
+      error: error.message
+    });
+  }
+};
+
+const deleteTugasById = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { tugas_id } = req.params;
+
+    // Ambil NIP guru
+    const [teacher] = await db.query(
+      `SELECT nip FROM guru WHERE user_id = ?`,
+      [userId]
+    );
+
+    if (!teacher.length) {
+      return res.status(404).json({ success: false, message: 'Guru tidak ditemukan' });
+    }
+
+    const guru_nip = teacher[0].nip;
+
+    // Cek apakah guru punya akses ke tugas ini
+    const [result] = await db.query(`
+      SELECT t.lampiran
+      FROM tugas t
+      JOIN krs_detail_materi kdm ON t.tugas_id = kdm.tugas_id
+      JOIN krs_detail kd ON kdm.krs_id = kd.krs_id
+      WHERE t.tugas_id = ?
+      AND kd.guru_nip = ?
+      LIMIT 1
+    `, [tugas_id, guru_nip]);
+
+    if (!result.length) {
+      return res.status(403).json({ success: false, message: 'Tugas tidak ditemukan atau tidak memiliki akses' });
+    }
+
+    const lampiran = result[0].lampiran;
+    if (lampiran) {
+      const lampiranPath = path.join(__dirname, '../../express-admin/Upload/profile_image', lampiran);
+      if (fs.existsSync(lampiranPath)) {
+        fs.unlinkSync(lampiranPath);
+      }
+    }
+
+    // Hapus tugas dari tabel
+    await db.query(`DELETE FROM tugas WHERE tugas_id = ?`, [tugas_id]);
+
+    res.status(200).json({
+      success: true,
+      message: 'Tugas berhasil dihapus',
+      data: {
+        tugas_id,
+        deleted_lampiran: lampiran ? true : false
+      }
+    });
+
+  } catch (error) {
+    console.error('Error delete tugas:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Gagal menghapus tugas',
+      error: error.message
+    });
+  }
+};
+
 
 const createMateriForSiswa = async (req, res) => {
   try {
@@ -492,6 +642,175 @@ const createMateriForSiswa = async (req, res) => {
     });
   }
 };
+
+const updateMateriById = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { materi_id } = req.params;
+    const { nama_materi, uraian } = req.body;
+    const lampiran = req.file ? req.file.filename : null;
+
+    // Ambil NIP guru
+    const [teacher] = await db.query(
+      `SELECT nip FROM guru WHERE user_id = ?`,
+      [userId]
+    );
+
+    if (!teacher.length) {
+      if (req.file) fs.unlinkSync(req.file.path);
+      return res.status(404).json({
+        success: false,
+        message: 'Guru tidak ditemukan'
+      });
+    }
+
+    const guru_nip = teacher[0].nip;
+
+    // Cek apakah guru berhak mengubah materi
+    const [check] = await db.query(`
+      SELECT m.lampiran
+      FROM materi m
+      JOIN krs_detail_materi kdm ON m.materi_id = kdm.materi_id
+      JOIN krs_detail kd ON kdm.krs_id = kd.krs_id
+      WHERE m.materi_id = ?
+      AND kd.guru_nip = ?
+      LIMIT 1
+    `, [materi_id, guru_nip]);
+
+    if (!check.length) {
+      if (req.file) fs.unlinkSync(req.file.path);
+      return res.status(403).json({
+        success: false,
+        message: 'Materi tidak ditemukan atau Anda tidak memiliki akses'
+      });
+    }
+
+    // Hapus lampiran lama jika ada dan diganti
+    if (lampiran && check[0].lampiran) {
+      const oldPath = path.join(__dirname, '../../express-admin/Upload/profile_image', check[0].lampiran);
+      if (fs.existsSync(oldPath)) {
+        fs.unlinkSync(oldPath);
+      }
+    }
+
+    // Siapkan query update
+    const updateFields = [];
+    const updateValues = [];
+
+    if (nama_materi) {
+      updateFields.push('nama_materi = ?');
+      updateValues.push(nama_materi);
+    }
+    if (uraian) {
+      updateFields.push('uraian = ?');
+      updateValues.push(uraian);
+    }
+    if (lampiran) {
+      updateFields.push('lampiran = ?');
+      updateValues.push(lampiran);
+    }
+
+    if (!updateFields.length) {
+      return res.status(400).json({
+        success: false,
+        message: 'Minimal satu field harus diisi'
+      });
+    }
+
+    updateValues.push(materi_id);
+
+    await db.query(`
+      UPDATE materi 
+      SET ${updateFields.join(', ')}
+      WHERE materi_id = ?
+    `, updateValues);
+
+    res.status(200).json({
+      success: true,
+      message: 'Materi berhasil diperbarui',
+      data: {
+        materi_id,
+        updated_fields: updateFields
+      }
+    });
+
+  } catch (error) {
+    if (req.file) fs.unlinkSync(req.file.path);
+    console.error('Error update materi:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Gagal memperbarui materi',
+      error: error.message
+    });
+  }
+};
+
+const deleteMateriById = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { materi_id } = req.params;
+
+    // Ambil NIP guru
+    const [teacher] = await db.query(
+      `SELECT nip FROM guru WHERE user_id = ?`,
+      [userId]
+    );
+
+    if (!teacher.length) {
+      return res.status(404).json({ success: false, message: 'Guru tidak ditemukan' });
+    }
+
+    const guru_nip = teacher[0].nip;
+
+    // Verifikasi materi milik guru
+    const [check] = await db.query(`
+      SELECT m.lampiran
+      FROM materi m
+      JOIN krs_detail_materi kdm ON m.materi_id = kdm.materi_id
+      JOIN krs_detail kd ON kdm.krs_id = kd.krs_id
+      WHERE m.materi_id = ?
+      AND kd.guru_nip = ?
+      LIMIT 1
+    `, [materi_id, guru_nip]);
+
+    if (!check.length) {
+      return res.status(403).json({
+        success: false,
+        message: 'Materi tidak ditemukan atau Anda tidak memiliki akses'
+      });
+    }
+
+    // Hapus file jika ada
+    const lampiran = check[0].lampiran;
+    if (lampiran) {
+      const filePath = path.join(__dirname, '../../express-admin/Upload/profile_image', lampiran);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+    }
+
+    // Hapus dari tabel materi
+    await db.query(`DELETE FROM materi WHERE materi_id = ?`, [materi_id]);
+
+    res.status(200).json({
+      success: true,
+      message: 'Materi berhasil dihapus',
+      data: {
+        materi_id,
+        deleted_lampiran: !!lampiran
+      }
+    });
+
+  } catch (error) {
+    console.error('Error delete materi:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Gagal menghapus materi',
+      error: error.message
+    });
+  }
+};
+
 
 // Add these functions to your dashboardController.js
 
@@ -1491,7 +1810,11 @@ module.exports = {
   getSiswaByKelasGuru,
   getMapelGuru,
   createTugasForSiswa,
+    updateTugasById,
+    deleteTugasById,
   createMateriForSiswa,
+    updateMateriById,
+    deleteMateriById,
   getTugasGuruByMapel,
   getMateriGuruByMapel,
   getTugasDetailById,

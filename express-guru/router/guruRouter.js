@@ -7,7 +7,11 @@ const {
   getSiswaByKelasGuru,
   getMapelGuru,
   createTugasForSiswa,
+    updateTugasById,
+    deleteTugasById,
   createMateriForSiswa,
+    updateMateriById,
+    deleteMateriById,
   getTugasGuruByMapel,
   getMateriGuruByMapel,
   getTugasDetailById,
@@ -31,13 +35,23 @@ router.get('/dashboard/', verifyToken, getdashboard);
 router.get('/dashboard/jadwal/', verifyToken, getJadwalGuru);
 router.get('/dashboard/siswa/:mapel_id', verifyToken, getSiswaByKelasGuru);
 router.get('/dashboard/mapel/', verifyToken, getMapelGuru);
+
+// API for tugas
 router.post('/dashboard/tugas/:mapel_id/', verifyToken, uploadlampirantugas.single('lampiran'), createTugasForSiswa);
-router.post('/dashboard/materi/:mapel_id/', verifyToken, uploadlampirantugas.single('lampiran'), createMateriForSiswa);
-// Add this to your router file
-router.post('/dashboard/absensi/:mapel_id', verifyToken, createAbsensiSiswa);
+router.put('/dashboard/tugas/:tugas_id', verifyToken, uploadlampirantugas.single('lampiran'), updateTugasById);
+router.delete('/dashboard/tugas/:tugas_id', verifyToken, deleteTugasById);
 router.get('/dashboard/tugas/:mapel_id', verifyToken, getTugasGuruByMapel);
+
+// API for materi
+router.post('/dashboard/materi/:mapel_id/', verifyToken, uploadlampirantugas.single('lampiran'), createMateriForSiswa);
+router.put('/dashboard/materi/:materi_id', verifyToken, uploadlampirantugas.single('lampiran'), updateMateriById);
+router.delete('/dashboard/materi/:materi_id', verifyToken, deleteMateriById);
+
+// Add this to your router file
 router.get('/dashboard/mapel/:mapel_id/tugas/:tugas_id', verifyToken, getSiswaPengumpulanTugas );
 router.get('/dashboard/mapel/:mapel_id/tugas/:tugas_id/siswa/:krs_id/', verifyToken, beriNilaiTugasSiswa );
+
+router.post('/dashboard/absensi/:mapel_id', verifyToken, createAbsensiSiswa);
 
 router.get('/dashboard/berita', verifyToken, getBerita);
 router.get('/dashboard/berita/:id', verifyToken, getBeritaById);
