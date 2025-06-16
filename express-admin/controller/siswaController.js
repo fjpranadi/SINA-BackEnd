@@ -536,13 +536,16 @@ const getSiswaBynis = async (req, res) => {
       }
     }
 
-    res.json(siswa);
+    res.json(siswa); 
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 };
 
 const importSiswaFromExcel = async (req, res) => {
+  // 1. Ambil kelas_id dari parameter URL
+  const { kelas_id } = req.params;
+
   if (!req.file) {
     return res.status(400).json({ message: "Mohon unggah sebuah file." });
   }
@@ -551,102 +554,117 @@ const importSiswaFromExcel = async (req, res) => {
   const conn = await db.getConnection();
 
   try {
+    // 2. Validasi kelas_id dari URL sebelum memproses file
+    // Pastikan kelas tujuan impor benar-benar ada di database.
+    const [kelasExists] = await conn.query('SELECT kelas_id FROM kelas WHERE kelas_id = ?', [kelas_id]);
+    if (kelasExists.length === 0) {
+      // Jika kelas tidak ada, hapus file yang sudah diupload dan kirim error.
+      fs.unlinkSync(filePath);
+      conn.release();
+      return res.status(404).json({ message: `Operasi dibatalkan. Kelas dengan ID "${kelas_id}" tidak ditemukan.` });
+    }
+
     let dataFromExcel;
 
-    // --- LOGIKA PEMILIHAN PARSER BERDASARKAN EKSTENSI FILE ---
+    // Logika parsing file CSV atau XLSX (Tidak ada perubahan)
     if (req.file.originalname.toLowerCase().endsWith('.csv')) {
-      // Gunakan parser manual yang andal untuk CSV
-      const fileContent = fs.readFileSync(filePath, 'utf8');
-      let cleanContent = fileContent.trim();
-      if (cleanContent.charCodeAt(0) === 0xFEFF) { cleanContent = cleanContent.slice(1); }
-      const rows = cleanContent.split(/\r?\n/);
-      const headers = rows[0].split(',').map(h => h.trim().replace(/"/g, ''));
-      dataFromExcel = [];
-      for (let i = 1; i < rows.length; i++) {
-        if (!rows[i].trim()) continue;
-        const values = rows[i].split(',').map(v => v.trim().replace(/"/g, ''));
-        const rowObject = {};
-        headers.forEach((header, index) => { rowObject[header] = values[index]; });
-        dataFromExcel.push(rowObject);
-      }
+        const fileContent = fs.readFileSync(filePath, 'utf8');
+        let cleanContent = fileContent.trim();
+        if (cleanContent.charCodeAt(0) === 0xFEFF) { cleanContent = cleanContent.slice(1); }
+        const rows = cleanContent.split(/\r?\n/);
+        const headers = rows[0].split(',').map(h => h.trim().replace(/"/g, ''));
+        dataFromExcel = [];
+        for (let i = 1; i < rows.length; i++) {
+            if (!rows[i].trim()) continue;
+            const values = rows[i].split(',').map(v => v.trim().replace(/"/g, ''));
+            const rowObject = {};
+            headers.forEach((header, index) => { rowObject[header] = values[index]; });
+            dataFromExcel.push(rowObject);
+        }
     } else if (req.file.originalname.toLowerCase().endsWith('.xlsx')) {
-      // Gunakan library 'xlsx' dengan opsi yang benar untuk Excel
-      const workbook = xlsx.readFile(filePath);
-      const sheetName = workbook.SheetNames[0];
-      const worksheet = workbook.Sheets[sheetName];
-      // OPSI PENTING: raw: false -> membaca nilai yang sudah diformat (teks)
-      // Ini mencegah pembulatan angka besar dan membaca tanggal sebagai string.
-      dataFromExcel = xlsx.utils.sheet_to_json(worksheet, { raw: false });
+        const workbook = xlsx.readFile(filePath);
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        dataFromExcel = xlsx.utils.sheet_to_json(worksheet, { raw: false });
     } else {
-      throw new Error('Format file tidak didukung. Harap unggah file .CSV atau .XLSX');
+        throw new Error('Format file tidak didukung. Harap unggah file .CSV atau .XLSX');
     }
 
     if (!dataFromExcel || dataFromExcel.length === 0) {
         throw new Error("Tidak ada data yang bisa dibaca dari file.");
     }
 
-    // --- Logika KRS Urut (tidak berubah) ---
+    // Logika penomoran KRS (Tidak ada perubahan)
     const [maxKrs] = await conn.query("SELECT MAX(CAST(SUBSTRING(krs_id, 4) AS UNSIGNED)) as max_num FROM krs WHERE krs_id LIKE 'KRS%'");
     let nextKrsNumber = (maxKrs[0].max_num || 0) + 1;
 
     const results = { successful: 0, failed: 0, errors: [] };
 
     for (const row of dataFromExcel) {
-      const newKrsId = `KRS${nextKrsNumber.toString().padStart(4, '0')}`;
-      
-      // Data mapping (tidak berubah)
-      const siswaData = {
-        nis: row['NIS'],
-        nisn: row['NISN'],
-        nama_siswa: row['Nama Siswa'],
-        email: row['Email Siswa'],
-        tanggal_lahir: formatDateForMySQL(row['Tanggal Lahir']),
-        tempat_lahir: row['Tempat Lahir'],
-        alamat: row['Alamat Siswa'],
-        jenis_kelamin: row['Jenis Kelamin'],
-        agama: row['Agama'],
-        no_telepon: formatPhoneNumber(row['No Telepon Siswa']),
-        kelas_id: String(row['ID Kelas']).trim(), // Pastikan ID Kelas selalu string
-        krs_id: newKrsId,
-        filename: null,
-        ayah_nik: row['NIK Ayah'],
-        ayah_nama: row['Nama Ayah'],
-        ayah_email: row['Email Ayah'],
-        ayah_tempat_lahir: row['Tempat Lahir Ayah'],
-        ayah_tanggal_lahir: formatDateForMySQL(row['Tanggal Lahir Ayah']),
-        ayah_alamat: row['Alamat Ayah'],
-        ayah_pekerjaan: row['Pekerjaan Ayah'],
-        ayah_no_telepon: formatPhoneNumber(row['No Telepon Ayah']),
-        ibu_nik: row['NIK Ibu'],
-        ibu_nama: row['Nama Ibu'],
-        ibu_email: row['Email Ibu'],
-        ibu_tempat_lahir: row['Tempat Lahir Ibu'],
-        ibu_tanggal_lahir: formatDateForMySQL(row['Tanggal Lahir Ibu']),
-        ibu_alamat: row['Alamat Ibu'],
-        ibu_pekerjaan: row['Pekerjaan Ibu'],
-        ibu_no_telepon: formatPhoneNumber(row['No Telepon Ibu']),
-      };
-
       await conn.beginTransaction();
       try {
+        const newKrsId = `KRS${nextKrsNumber.toString().padStart(4, '0')}`;
+        
+        // 3. Mapping data dari Excel. Perhatikan bahwa 'kelas_id' sekarang diambil dari URL.
+        const siswaData = {
+          nis: row['NIS'],
+          nisn: row['NISN'],
+          nama_siswa: row['Nama Siswa'],
+          email: row['Email Siswa'],
+          tanggal_lahir: formatDateForMySQL(row['Tanggal Lahir']),
+          tempat_lahir: row['Tempat Lahir'],
+          alamat: row['Alamat Siswa'],
+          jenis_kelamin: row['Jenis Kelamin'],
+          agama: row['Agama'],
+          no_telepon: formatPhoneNumber(row['No Telepon Siswa']),
+          
+          // --- INI BAGIAN PENTING ---
+          // Gunakan kelas_id dari parameter URL untuk setiap siswa
+          kelas_id: kelas_id, 
+          
+          krs_id: newKrsId,
+          filename: null,
+          ayah_nik: row['NIK Ayah'],
+          ayah_nama: row['Nama Ayah'],
+          ayah_email: row['Email Ayah'],
+          ayah_tempat_lahir: row['Tempat Lahir Ayah'],
+          ayah_tanggal_lahir: formatDateForMySQL(row['Tanggal Lahir Ayah']),
+          ayah_alamat: row['Alamat Ayah'],
+          ayah_pekerjaan: row['Pekerjaan Ayah'],
+          ayah_no_telepon: formatPhoneNumber(row['No Telepon Ayah']),
+          ibu_nik: row['NIK Ibu'],
+          ibu_nama: row['Nama Ibu'],
+          ibu_email: row['Email Ibu'],
+          ibu_tempat_lahir: row['Tempat Lahir Ibu'],
+          ibu_tanggal_lahir: formatDateForMySQL(row['Tanggal Lahir Ibu']),
+          ibu_alamat: row['Alamat Ibu'],
+          ibu_pekerjaan: row['Pekerjaan Ibu'],
+          ibu_no_telepon: formatPhoneNumber(row['No Telepon Ibu']),
+        };
+
+        // Memanggil fungsi transaksi (Tidak ada perubahan)
         await _createSiswaWithParentsTransaction(siswaData, conn);
+        
         await conn.commit();
         results.successful++;
         nextKrsNumber++;
       } catch (error) {
         await conn.rollback();
         results.failed++;
-        results.errors.push({ nis: siswaData.nis || `ROW_${results.successful + results.failed}`, reason: error.message });
+        results.errors.push({ nis: row['NIS'] || `BARIS_${results.successful + results.failed}`, reason: error.message });
       }
     }
 
-    res.status(200).json({ message: "Proses impor selesai.", ...results });
+    res.status(200).json({ message: `Proses impor ke kelas ${kelas_id} selesai.`, ...results });
 
   } catch (error) {
+    await conn.rollback();
     console.error('Error saat impor:', error);
     res.status(500).json({ message: "Gagal memproses file.", error: error.message });
   } finally {
-    fs.unlinkSync(filePath);
+    if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+    }
     conn.release();
   }
 };

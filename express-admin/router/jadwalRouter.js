@@ -8,6 +8,7 @@ const {
   updateJadwal,
   hapusJadwal,
   getJadwalByJadwalId,
+  getKelasJadwal,
   hapusJadwalByKelasId
 } = require('../controller/jadwalController');
 const { verifyAdmin } = require('../controller/authController');
@@ -19,6 +20,7 @@ router.get('/admin/jadwal/:kelas_id',verifyAdmin, getJadwalById);      // Ambil 
 router.get('/admin/jadwaldetail/:jadwal_id',verifyAdmin, getJadwalByJadwalId);      // Ambil 1 jadwal
 router.put('/admin/jadwal/:jadwal_id',verifyAdmin, updateJadwal);       // Update jadwal
 router.delete('/admin/jadwal/:jadwal_id',verifyAdmin, hapusJadwal);     // Hapus jadwal
+router.get('/admin/kelas-jadwal', verifyAdmin, getKelasJadwal);
 router.delete('/admin/jadwalbykelas/:kelas_id', verifyAdmin,hapusJadwalByKelasId);
 
 module.exports = router;

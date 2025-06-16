@@ -7,11 +7,13 @@ const getMapelKelasGuru = async (req, res) => {
   try {
     const userId = req.user.userId;
 
+    // Ambil nip guru dari user
     const [[guru]] = await db.query('SELECT nip FROM guru WHERE user_id = ?', [userId]);
     if (!guru) {
       return res.status(404).json({ status: 404, message: 'Guru tidak ditemukan.' });
     }
 
+    // Ambil mapel & kelas berdasarkan guru dari tabel mapel dan krs_detail
     const [rows] = await db.query(`
       SELECT 
         kd.krs_id,
@@ -44,11 +46,13 @@ const getTugasGuruByMapel = async (req, res) => {
     const userId = req.user.userId;
     const { mapel_id } = req.params;
 
+    // Ambil nip dari user
     const [[guru]] = await db.query('SELECT nip FROM guru WHERE user_id = ?', [userId]);
     if (!guru) {
       return res.status(404).json({ status: 404, message: 'Guru tidak ditemukan.' });
     }
 
+    // Ambil data tugas berdasarkan mapel_id dan guru_nip dari krs_detail
     const [rows] = await db.query(`
       SELECT 
         tgs.tugas_id,
@@ -85,11 +89,13 @@ const getMateriGuruByMapel = async (req, res) => {
     const userId = req.user.userId;
     const { mapel_id } = req.params;
 
+    // Ambil nip dari user
     const [[guru]] = await db.query('SELECT nip FROM guru WHERE user_id = ?', [userId]);
     if (!guru) {
       return res.status(404).json({ status: 404, message: 'Guru tidak ditemukan.' });
     }
 
+    // Ambil data materi berdasarkan mapel_id dan guru_nip dari krs_detail
     const [rows] = await db.query(`
       SELECT 
         mtr.materi_id,
@@ -124,11 +130,13 @@ const getTugasDetailById = async (req, res) => {
     const { tugas_id } = req.params;
     const userId = req.user.userId;
 
+    // Validasi guru
     const [[guru]] = await db.query('SELECT nip FROM guru WHERE user_id = ?', [userId]);
     if (!guru) {
       return res.status(404).json({ status: 404, message: 'Guru tidak ditemukan.' });
     }
 
+    // Ambil detail tugas
     const [[tugas]] = await db.query(`
       SELECT 
         tgs.tugas_id,
@@ -168,11 +176,13 @@ const getMateriDetailById = async (req, res) => {
     const { materi_id } = req.params;
     const userId = req.user.userId;
 
+    // Validasi guru
     const [[guru]] = await db.query('SELECT nip FROM guru WHERE user_id = ?', [userId]);
     if (!guru) {
       return res.status(404).json({ status: 404, message: 'Guru tidak ditemukan.' });
     }
 
+    // Ambil detail materi
     const [[materi]] = await db.query(`
       SELECT 
         mtr.materi_id,
@@ -214,6 +224,7 @@ const updateTugasById = async (req, res) => {
       return res.status(404).json({ status: 404, message: 'Guru tidak ditemukan.' });
     }
 
+    // Cek tugas milik guru
     const [[existing]] = await db.query(`
       SELECT tgs.*
       FROM tugas tgs
@@ -226,6 +237,7 @@ const updateTugasById = async (req, res) => {
       return res.status(404).json({ status: 404, message: 'Tugas tidak ditemukan atau bukan milik Anda.' });
     }
 
+    // Pakai data baru jika ada, jika tidak pakai data lama
     const {
       judul = existing.judul,
       deskripsi = existing.deskripsi,
@@ -259,6 +271,7 @@ const updateMateriById = async (req, res) => {
       return res.status(404).json({ status: 404, message: 'Guru tidak ditemukan.' });
     }
 
+    // Cek materi milik guru
     const [[existing]] = await db.query(`
       SELECT mtr.*
       FROM materi mtr
@@ -271,6 +284,7 @@ const updateMateriById = async (req, res) => {
       return res.status(404).json({ status: 404, message: 'Materi tidak ditemukan atau bukan milik Anda.' });
     }
 
+    // Pakai data baru jika ada, jika tidak pakai data lama
     const {
       judul = existing.judul,
       deskripsi = existing.deskripsi,
@@ -293,59 +307,12 @@ const updateMateriById = async (req, res) => {
   }
 };
 
-const postTugas = async (req, res) => {
-  try {
-    const userId = req.user.userId;
-    const {
-      judul,
-      deskripsi,
-      tenggat_kumpul,
-      tanggal_pengumpulan,
-      mapel_id,
-      kelas_id
-    } = req.body;
-
-    const [[guru]] = await db.query('SELECT nip FROM guru WHERE user_id = ?', [userId]);
-    if (!guru) {
-      return res.status(404).json({ status: 404, message: 'Guru tidak ditemukan.' });
-    }
-
-    const [[valid]] = await db.query(`
-      SELECT kd.krs_id
-      FROM krs_detail kd
-      JOIN krs ON kd.krs_id = krs.krs_id
-      WHERE kd.guru_nip = ? AND kd.mapel_id = ? AND krs.kelas_id = ?
-    `, [guru.nip, mapel_id, kelas_id]);
-
-    if (!valid) {
-      return res.status(403).json({ status: 403, message: 'Anda tidak memiliki akses ke mapel dan kelas ini.' });
-    }
-
-    let lampiran = null;
-    if (req.file) {
-      lampiran = req.file.filename;
-    }
-
-    await db.query(`
-      INSERT INTO tugas (judul, deskripsi, tenggat_kumpul, tanggal_pengumpulan, lampiran, mapel_id, krs_id, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
-    `, [judul, deskripsi, tenggat_kumpul, tanggal_pengumpulan, lampiran, mapel_id, valid.krs_id]);
-
-    res.status(201).json({ status: 201, message: 'Tugas berhasil ditambahkan.' });
-
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ status: 500, message: 'Gagal menambahkan tugas.' });
-  }
-};
-
 module.exports = {
-  getMapelKelasGuru,
-  getTugasGuruByMapel,
-  getMateriGuruByMapel,
-  getTugasDetailById,
-  getMateriDetailById,
-  updateTugasById,
-  updateMateriById,
-  postTugas
+    getMapelKelasGuru,
+    getTugasGuruByMapel,
+    getMateriGuruByMapel,
+    getTugasDetailById,
+    getMateriDetailById,
+    updateTugasById,
+    updateMateriById
 };

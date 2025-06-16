@@ -41,9 +41,9 @@ router.get('/dashboard/mapel/:mapel_id/tugas/:tugas_id/siswa/:krs_id/', verifyTo
 
 router.get('/dashboard/berita', verifyToken, getBerita);
 router.get('/dashboard/berita/:id', verifyToken, getBeritaById);
-router.post('/dashboard/berita', uploadberitaguru.single('foto'), createBeritaGuru);
-router.put('/dashboard/berita/:berita_id', uploadberitaguru.single('foto'), updateBeritaGuru);
-router.delete('/dashboard/berita/:berita_id', deleteBeritaGuru);
+router.post('/dashboard/berita',verifyToken, uploadberitaguru.single('foto'), createBeritaGuru);
+router.put('/dashboard/berita/:berita_id',verifyToken, uploadberitaguru.single('foto'), updateBeritaGuru);
+router.delete('/dashboard/berita/:berita_id',verifyToken, deleteBeritaGuru);
 
 // Get materials by subject
 router.get('/dashboard/materi/:mapel_id', verifyToken, getMateriGuruByMapel);
