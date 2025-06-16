@@ -879,4 +879,190 @@ const getDetailKelas = async (req, res) => {
   }
 };
 
-module.exports = {getBiodataSiswa, getJadwalSiswa, editDataDiriSiswa, getBerita, getMateriSiswa, getTugasSiswa, editTugasSiswa, getBeritaById, getDashboardRingkasanSiswa, getJadwalSiswabyhari, getMateriHariIni, getStatistikNilaiSiswa, getDetailKelas  };
+const getDetailRaporSiswa = async (req, res) => {
+  const userId = req.user.userId;
+  const { tahun_akademik_id } = req.params;
+
+  try {
+    // 1. Ambil biodata siswa
+    const [siswaResults] = await db.query(`
+      SELECT 
+        s.nis,
+        s.nisn,
+        s.nama_siswa,
+        s.tempat_lahir,
+        s.tanggal_lahir,
+        s.alamat,
+        s.jenis_kelamin,
+        s.agama,
+        s.no_telepon,
+        s.foto_profil,
+        u.username,
+        u.email
+      FROM siswa s
+      JOIN user u ON s.user_id = u.user_id
+      WHERE u.user_id = ?
+    `, [userId]);
+    
+    const siswa = siswaResults[0];
+    
+    if (!siswa) {
+      return res.status(404).json({ message: 'Data siswa tidak ditemukan' });
+    }
+
+    // 2. Ambil detail kelas
+    const [[kelas]] = await db.query(`
+      SELECT 
+        kl.kelas_id,
+        kl.nama_kelas,
+        kl.tingkat,
+        kl.jenjang,
+        ta.tahun_akademik_id,
+        ta.tahun_mulai,
+        ta.tahun_berakhir,
+        kr.nama_kurikulum,
+        g.nip AS wali_kelas_nip,
+        g.nama_guru AS wali_kelas,
+        g.foto_profil AS foto_wali_kelas
+      FROM krs k
+      JOIN kelas kl ON k.kelas_id = kl.kelas_id
+      JOIN tahun_akademik ta ON (kl.kurikulum_id = ta.kurikulum_id AND kl.tahun_akademik_id = ta.tahun_akademik_id)
+      JOIN kurikulum kr ON kl.kurikulum_id = kr.kurikulum_id
+      LEFT JOIN guru g ON kl.guru_nip = g.nip
+      WHERE k.siswa_nis = ?
+        AND ta.tahun_akademik_id = ?
+      LIMIT 1
+    `, [siswa.nis, tahun_akademik_id]);
+
+    if (!kelas) {
+      return res.status(404).json({ 
+        message: 'Data kelas tidak ditemukan untuk tahun akademik ini' 
+      });
+    }
+
+    // 3. Ambil semua nilai dari krs_detail - PERBAIKAN DI SINI
+    const [nilaiList] = await db.query(`
+      SELECT 
+        kd.mapel_id,
+        m.nama_mapel,
+        kd.nilai AS nilai_pengetahuan,
+        kd.keterampilan AS nilai_keterampilan,
+        kd.kkm,
+        CASE
+          WHEN kd.nilai IS NOT NULL AND kd.keterampilan IS NOT NULL 
+          THEN ROUND((kd.nilai + kd.keterampilan) / 2, 2)
+          ELSE NULL
+        END AS nilai_akhir,
+        CASE 
+          WHEN kd.nilai IS NOT NULL AND kd.keterampilan IS NOT NULL AND
+               (kd.nilai + kd.keterampilan) / 2 >= kd.kkm 
+          THEN 'Tuntas'
+          WHEN kd.nilai IS NULL OR kd.keterampilan IS NULL
+          THEN 'Belum Lengkap'
+          ELSE 'Belum Tuntas'
+        END AS status,
+        g.nama_guru AS guru_pengampu
+      FROM krs_detail kd
+      JOIN mapel m ON kd.mapel_id = m.mapel_id
+      LEFT JOIN guru g ON kd.guru_nip = g.nip
+      WHERE kd.krs_id IN (
+        SELECT krs_id FROM krs 
+        WHERE siswa_nis = ? 
+        AND kelas_id = ?
+      )
+      ORDER BY m.nama_mapel ASC
+    `, [siswa.nis, kelas.kelas_id]);
+
+    // 4. Hitung statistik nilai
+    const nilaiTerisi = nilaiList.filter(n => n.nilai_pengetahuan !== null && n.nilai_keterampilan !== null);
+    const totalMapel = nilaiTerisi.length;
+    const totalTuntas = nilaiTerisi.filter(n => n.status === 'Tuntas').length;
+    const totalBelumTuntas = totalMapel - totalTuntas;
+    
+    const rataRataPengetahuan = totalMapel > 0 
+      ? parseFloat((nilaiTerisi.reduce((sum, n) => sum + n.nilai_pengetahuan, 0) / totalMapel).toFixed(2))
+      : 0;
+
+    const rataRataKeterampilan = totalMapel > 0 
+      ? parseFloat((nilaiTerisi.reduce((sum, n) => sum + n.nilai_keterampilan, 0) / totalMapel).toFixed(2))
+      : 0;
+
+    const rataRataAkhir = totalMapel > 0 
+      ? parseFloat((nilaiTerisi.reduce((sum, n) => sum + n.nilai_akhir, 0) / totalMapel).toFixed(2))
+      : 0;
+      
+    // 5. Format response
+    res.status(200).json({
+      message: 'Detail rapor siswa berhasil diambil',
+      status: 200,
+      data: {
+        biodata: {
+          nis: siswa.nis,
+          nisn: siswa.nisn,
+          nama: siswa.nama_siswa,
+          tempat_lahir: siswa.tempat_lahir,
+          tanggal_lahir: siswa.tanggal_lahir,
+          foto_profil: siswa.foto_profil,
+          alamat: siswa.alamat,
+          jenis_kelamin: siswa.jenis_kelamin,
+          agama: siswa.agama,
+          no_telepon: siswa.no_telepon
+        },
+        
+        kelas: {
+          id: kelas.kelas_id,
+          nama_kelas: kelas.nama_kelas,
+          tingkat: kelas.tingkat,
+          jenjang: kelas.jenjang,
+          tahun_akademik: {
+            id: kelas.tahun_akademik_id,
+            periode: `${new Date(kelas.tahun_mulai).getFullYear()}/${new Date(kelas.tahun_berakhir).getFullYear()}`,
+            tahun_mulai: kelas.tahun_mulai,
+            tahun_berakhir: kelas.tahun_berakhir
+          },
+          kurikulum: kelas.nama_kurikulum,
+          wali_kelas: {
+            nip: kelas.wali_kelas_nip,
+            nama: kelas.wali_kelas,
+            foto_profil: kelas.foto_wali_kelas
+          }
+        },
+        
+        nilai: nilaiList.map(n => ({
+          mapel_id: n.mapel_id,
+          nama_mapel: n.nama_mapel,
+          nilai_pengetahuan: n.nilai_pengetahuan,
+          nilai_keterampilan: n.nilai_keterampilan,
+          nilai_akhir: n.nilai_akhir,
+          kkm: n.kkm,
+          status: n.status,
+          guru_pengampu: n.guru_pengampu
+        })),
+        
+        statistik: {
+          total_mapel: totalMapel,
+          total_tuntas: totalTuntas,
+          total_belum_tuntas: totalBelumTuntas,
+          total_belum_lengkap: nilaiList.length - totalMapel,
+          rata_rata_pengetahuan: rataRataPengetahuan,
+          rata_rata_keterampilan: rataRataKeterampilan,
+          rata_rata_nilai_akhir: rataRataAkhir
+        },
+        
+        catatan: {
+          tanggal_cetak: new Date().toISOString(),
+          keterangan: 'Rapor ini dicetak secara elektronik dan sah tanpa tanda tangan basah'
+        }
+      }
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      message: 'Gagal mengambil detail rapor siswa',
+      error: err.message
+    });
+  }
+};
+
+module.exports = {getBiodataSiswa, getJadwalSiswa, editDataDiriSiswa, getBerita, getMateriSiswa, getTugasSiswa, editTugasSiswa, getBeritaById, getDashboardRingkasanSiswa, getJadwalSiswabyhari, getMateriHariIni, getStatistikNilaiSiswa, getDetailKelas, getDetailRaporSiswa  };
