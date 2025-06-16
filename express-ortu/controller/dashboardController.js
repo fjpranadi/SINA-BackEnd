@@ -207,5 +207,198 @@ const editBiodataOrtu = async (req, res) => {
   }
 };
 
+//perubahan mulai dari sini
+// Fungsi untuk mengambil statistik nilai siswa
 
-module.exports = {getBiodataOrtu, getSiswaByOrtu, getBerita, editBiodataOrtu};
+const getStatistikNilai = async (req, res) => {
+  const userId = req.user.userId;
+
+  try {
+    // 1. Ambil nik ortu
+    const [[ortu]] = await db.query('SELECT nik FROM ortu WHERE user_id = ?', [userId]);
+    if (!ortu) {
+      return res.status(404).json({ message: 'Data ortu tidak ditemukan' });
+    }
+
+    const nik = ortu.nik;
+
+    // 2. Ambil semua nis anak dari relasi ortu-siswa
+    const [siswaList] = await db.query('CALL sp_read_siswa_ortu_by_nik(?)', [nik]);
+    if (siswaList[0].length === 0) {
+      return res.status(404).json({ message: 'Tidak ada anak yang terhubung dengan ortu ini' });
+    }
+
+    // 3. Ambil nilai masing-masing anak
+    const hasil = [];
+
+    for (const siswa of siswaList[0]) {
+      const nis = siswa.nis;
+
+      const [nilaiRows] = await db.query('CALL sp_read_statistik_nilai(?)', [nis]);
+      hasil.push({
+        nis,
+        nama: siswa.nama_siswa,
+        nilai: nilaiRows[0] || []
+      });
+    }
+
+    return res.status(200).json({
+      message: 'Statistik nilai semua anak berhasil diambil',
+      status: 200,
+      data: hasil
+    });
+
+  } catch (err) {
+    console.error('❌ ERROR getSemuaStatistikNilaiAnak:', err);
+    res.status(500).json({ message: 'Gagal mengambil statistik nilai', error: err.message });
+  }
+};
+
+
+const getRekapAbsensi = async (req, res) => {
+  const userId = req.user.userId;
+
+  try {
+    // 1. Ambil nik ortu dari user_id
+    const [[ortu]] = await db.query('SELECT nik FROM ortu WHERE user_id = ?', [userId]);
+    if (!ortu) {
+      return res.status(404).json({ message: 'Data ortu tidak ditemukan' });
+    }
+    const nik = ortu.nik;
+
+    // 2. Ambil semua anak (nis) berdasarkan nik ortu
+    const [siswaList] = await db.query('CALL sp_read_siswa_ortu_by_nik(?)', [nik]);
+    if (siswaList[0].length === 0) {
+      return res.status(404).json({ message: 'Tidak ada anak yang terhubung' });
+    }
+
+    // 3. Ambil rekap absensi untuk setiap anak
+    const hasil = [];
+
+    for (const siswa of siswaList[0]) {
+      const nis = siswa.nis;
+      const nama = siswa.nama_siswa;
+
+      const [rekap] = await db.query('CALL sp_rekap_absen_siswa(?)', [nis]);
+
+      hasil.push({
+        nis,
+        nama,
+        absensi: rekap[0] || []
+      });
+    }
+
+    return res.status(200).json({
+      message: 'Rekap absensi semua anak berhasil diambil',
+      data: hasil
+    });
+
+  } catch (err) {
+    console.error('❌ ERROR getSemuaRekapAbsensiAnak:', err);
+    return res.status(500).json({ message: 'Gagal mengambil rekap absensi', error: err.message });
+  }
+};
+
+
+const postSuratIzin = async (req, res) => {
+  const userId = req.user.userId;
+  const { nis, tanggal, keterangan, uraian } = req.body;
+  const fileSurat = req.file ? req.file.filename : null;
+
+  try {
+    // 1. Ambil nik orang tua dari user
+    const [[ortu]] = await db.query('SELECT nik FROM ortu WHERE user_id = ?', [userId]);
+    if (!ortu) {
+      return res.status(404).json({ message: 'Data ortu tidak ditemukan' });
+    }
+
+    const nik = ortu.nik;
+
+    // 2. Validasi bahwa NIS ini memang milik ortu ini
+    const [siswaRows] = await db.query('SELECT * FROM siswa_ortu WHERE nik = ? AND nis = ?', [nik, nis]);
+    if (siswaRows.length === 0) {
+      return res.status(403).json({ message: 'NIS ini tidak terkait dengan akun ortu ini' });
+    }
+
+    // 3. Ambil krs_id berdasarkan nis (via SP)
+    const [krsRows] = await db.query('CALL sp_get_siswa_current_krs(?)', [nis]);
+    if (!krsRows[0] || krsRows[0].length === 0) {
+      return res.status(404).json({ message: 'KRS siswa tidak ditemukan' });
+    }
+    const krs_id = krsRows[0][0].krs_id;
+
+    // 4. Generate absensi_id
+    const absensi_id = `ABS${Date.now()}${nis}`;
+
+    // 5. Simpan surat izin
+    await db.query('CALL ortu_create_surat(?, ?, ?, ?, ?, ?)', [
+      absensi_id,
+      krs_id,
+      tanggal,
+      keterangan,
+      uraian,
+      fileSurat
+    ]);
+
+    return res.status(200).json({ message: 'Surat izin berhasil diajukan' });
+
+  } catch (err) {
+    console.error('❌ ERROR postSuratIzin:', err);
+    return res.status(500).json({
+      message: 'Gagal mengajukan surat izin',
+      error: err.message
+    });
+  }
+};
+
+
+const getTugasSiswa = async (req, res) => {
+  const userId = req.user.userId;
+
+  try {
+    // 1. Ambil NIK ortu dari user
+    const [[ortu]] = await db.query('SELECT nik FROM ortu WHERE user_id = ?', [userId]);
+    if (!ortu) {
+      return res.status(404).json({ message: 'Data ortu tidak ditemukan' });
+    }
+
+    const nik = ortu.nik;
+
+    // 2. Ambil semua anak berdasarkan nik ortu
+    const [siswaList] = await db.query('CALL sp_read_siswa_ortu_by_nik(?)', [nik]);
+    if (siswaList[0].length === 0) {
+      return res.status(404).json({ message: 'Tidak ada anak yang terhubung' });
+    }
+
+    // 3. Ambil tugas masing-masing anak
+    const hasil = [];
+
+    for (const siswa of siswaList[0]) {
+      const nis = siswa.nis;
+      const nama = siswa.nama_siswa;
+
+      const [tugasRows] = await db.query('CALL sp_get_siswa_current_krs(?)', [nis]);
+
+      hasil.push({
+        nis,
+        nama,
+        tugas: tugasRows[0] || []
+      });
+    }
+
+    return res.status(200).json({
+      message: 'Tugas semua anak berhasil diambil',
+      data: hasil
+    });
+
+  } catch (err) {
+    console.error('❌ ERROR getSemuaTugasSiswaByOrtu:', err);
+    return res.status(500).json({ message: 'Gagal mengambil tugas siswa', error: err.message });
+  }
+};
+
+
+
+
+module.exports = {getBiodataOrtu, getSiswaByOrtu, getBerita, editBiodataOrtu, getStatistikNilai, getRekapAbsensi, postSuratIzin, getTugasSiswa};
+

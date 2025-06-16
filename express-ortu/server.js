@@ -4,6 +4,7 @@ const ortuRouter = require('./router/ortuRouter');
 require('dotenv').config();
 
 app.use(express.json());
+app.use(express.urlencoded({ extended: true })); //untuk form-data tanpa file
 app.use('/api', ortuRouter);
 
 const PORT = process.env.PORT || 3006;
