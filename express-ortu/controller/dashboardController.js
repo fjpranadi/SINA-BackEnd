@@ -4,7 +4,7 @@ const bcrypt = require('bcryptjs');
 const JWT_SECRET = 'token-jwt'; // Ganti ini di real project
 const fs = require('fs');
 const path = require('path');
-
+const { v4: uuidv4 } = require('uuid');
 
 const getBiodataOrtu = async (req, res) => {
   const userId = req.user.userId; // diambil dari JWT
@@ -259,45 +259,48 @@ const getRekapAbsensi = async (req, res) => {
   const userId = req.user.userId;
 
   try {
-    // 1. Ambil nik ortu dari user_id
     const [[ortu]] = await db.query('SELECT nik FROM ortu WHERE user_id = ?', [userId]);
-    if (!ortu) {
-      return res.status(404).json({ message: 'Data ortu tidak ditemukan' });
-    }
-    const nik = ortu.nik;
+    if (!ortu) return res.status(404).json({ message: 'Orang tua tidak ditemukan' });
 
-    // 2. Ambil semua anak (nis) berdasarkan nik ortu
-    const [siswaList] = await db.query('CALL sp_read_siswa_ortu_by_nik(?)', [nik]);
-    if (siswaList[0].length === 0) {
-      return res.status(404).json({ message: 'Tidak ada anak yang terhubung' });
-    }
-
-    // 3. Ambil rekap absensi untuk setiap anak
+    const [anakList] = await db.query('CALL sp_read_siswa_ortu_by_nik(?)', [ortu.nik]);
     const hasil = [];
 
-    for (const siswa of siswaList[0]) {
-      const nis = siswa.nis;
-      const nama = siswa.nama_siswa;
+    for (const anak of anakList[0]) {
+      const nis = anak.nis;
+      const nama = anak.nama_siswa;
 
-      const [rekap] = await db.query('CALL sp_rekap_absen_siswa(?)', [nis]);
+      const [krsResult] = await db.query('CALL sp_get_siswa_current_krs(?)', [siswa.nis]);
+      const krs_id = krsResult[0][0]?.krs_id;
+
+      if (!krs_id) {
+        return res.status(404).json({ message: 'KRS siswa tidak ditemukan' });
+      }
+
+      const [[rekap]] = await db.query('CALL sp_rekap_absen_siswa(?)', [krs_id]);
 
       hasil.push({
         nis,
         nama,
-        absensi: rekap[0] || []
+        absensi: {
+          hadir: rekap.hadir || 0,
+          izin: rekap.izin || 0,
+          sakit: rekap.sakit || 0,
+          alpha: rekap.alpha || 0
+        }
       });
     }
 
-    return res.status(200).json({
+    res.status(200).json({
       message: 'Rekap absensi semua anak berhasil diambil',
       data: hasil
     });
 
   } catch (err) {
-    console.error('❌ ERROR getSemuaRekapAbsensiAnak:', err);
-    return res.status(500).json({ message: 'Gagal mengambil rekap absensi', error: err.message });
+    console.error(err);
+    res.status(500).json({ message: 'Gagal mengambil rekap absensi anak', error: err.message });
   }
 };
+
 
 
 const postSuratIzin = async (req, res) => {
@@ -306,31 +309,24 @@ const postSuratIzin = async (req, res) => {
   const fileSurat = req.file ? req.file.filename : null;
 
   try {
-    // 1. Ambil nik orang tua dari user
+    // 1. Cari NIK ortu berdasarkan user login
     const [[ortu]] = await db.query('SELECT nik FROM ortu WHERE user_id = ?', [userId]);
-    if (!ortu) {
-      return res.status(404).json({ message: 'Data ortu tidak ditemukan' });
-    }
+    if (!ortu) return res.status(404).json({ message: 'Data ortu tidak ditemukan' });
 
-    const nik = ortu.nik;
+    // 2. Cek apakah nis anak valid dan milik ortu ini
+    const [anakList] = await db.query('CALL sp_read_siswa_ortu_by_nik(?)', [ortu.nik]);
+    const anak = anakList[0].find(a => a.nis === nis);
+    if (!anak) return res.status(403).json({ message: 'Anak tidak ditemukan atau tidak terkait ortu ini' });
 
-    // 2. Validasi bahwa NIS ini memang milik ortu ini
-    const [siswaRows] = await db.query('SELECT * FROM siswa_ortu WHERE nik = ? AND nis = ?', [nik, nis]);
-    if (siswaRows.length === 0) {
-      return res.status(403).json({ message: 'NIS ini tidak terkait dengan akun ortu ini' });
-    }
-
-    // 3. Ambil krs_id berdasarkan nis (via SP)
+    // 3. Ambil krs_id dari nis
     const [krsRows] = await db.query('CALL sp_get_siswa_current_krs(?)', [nis]);
-    if (!krsRows[0] || krsRows[0].length === 0) {
-      return res.status(404).json({ message: 'KRS siswa tidak ditemukan' });
-    }
-    const krs_id = krsRows[0][0].krs_id;
+    const krs_id = krsRows[0]?.[0]?.krs_id;
+    if (!krs_id) return res.status(404).json({ message: 'KRS tidak ditemukan' });
 
-    // 4. Generate absensi_id
-    const absensi_id = `ABS${Date.now()}${nis}`;
+    // 4. Buat UUID untuk absensi_id
+    const absensi_id = uuidv4();
 
-    // 5. Simpan surat izin
+    // 5. Insert melalui prosedur
     await db.query('CALL ortu_create_surat(?, ?, ?, ?, ?, ?)', [
       absensi_id,
       krs_id,
@@ -343,14 +339,13 @@ const postSuratIzin = async (req, res) => {
     return res.status(200).json({ message: 'Surat izin berhasil diajukan' });
 
   } catch (err) {
-    console.error('❌ ERROR postSuratIzin:', err);
-    return res.status(500).json({
+    console.error(err);
+    res.status(500).json({
       message: 'Gagal mengajukan surat izin',
       error: err.message
     });
   }
 };
-
 
 const getTugasSiswa = async (req, res) => {
   const userId = req.user.userId;
