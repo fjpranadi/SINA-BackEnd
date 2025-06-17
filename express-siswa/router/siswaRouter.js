@@ -16,9 +16,11 @@ const {
   getBeritaById, 
   getDashboardRingkasanSiswa, 
   getJadwalSiswabyhari,
-getMateriHariIni,
-getStatistikNilaiSiswa,
-getDetailKelas 
+  getMateriHariIni,
+  getStatistikNilaiSiswa,
+  getDetailKelas,
+  getDetailRaporSiswa,
+  downloadRaporPdf 
 } = require('../controller/dashboardController');
 const uploadtugas = require('../middleware/uploadtugasMiddleware'); 
 const uploadprofile = require('../middleware/uploadProfile'); 
@@ -41,8 +43,11 @@ router.get('/dashboard/jumlahTugasMateri', verifyToken, getJumlahTugasMateri);
 router.get('/dashboard/materi/:mapel_id', verifyToken, getMateri);
 router.get('/dashboard/tugas/:mapel_id', verifyToken, getTugas);
 
+//nilai
 router.get('/dashboard/nilai/:tahun_akademik_id', verifyToken, getStatistikNilaiSiswa );
 router.get('/dashboard/detail-kelas', verifyToken, getDetailKelas );
+router.get('/dashboard/rapor/:tahun_akademik_id', verifyToken, getDetailRaporSiswa);
+router.get('/dashboard/rapor/download/:filename', verifyToken, downloadRaporPdf);
 
 // Tugas & Materi Detail routes
 router.get('/dashboard/materiDetail/:materi_id', verifyToken, getMateriDetail);

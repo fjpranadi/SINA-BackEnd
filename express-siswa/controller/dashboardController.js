@@ -4,6 +4,8 @@ const bcrypt = require('bcryptjs');
 const JWT_SECRET = 'token-jwt'; // Ganti ini di real project
 const fs = require('fs');
 const path = require('path');
+const PDFDocument = require('pdfkit');
+const { generateRaporPdf } = require('../middleware/generatePdf');
 
 
 const getBiodataSiswa = async (req, res) => {
@@ -940,7 +942,7 @@ const getDetailRaporSiswa = async (req, res) => {
       });
     }
 
-    // 3. Ambil semua nilai dari krs_detail - PERBAIKAN DI SINI
+    // 3. Ambil semua nilai
     const [nilaiList] = await db.query(`
       SELECT 
         kd.mapel_id,
@@ -990,69 +992,60 @@ const getDetailRaporSiswa = async (req, res) => {
     const rataRataAkhir = totalMapel > 0 
       ? parseFloat((nilaiTerisi.reduce((sum, n) => sum + n.nilai_akhir, 0) / totalMapel).toFixed(2))
       : 0;
-      
-    // 5. Format response
+
+    // 5. Siapkan data untuk PDF
+    const pdfData = {
+      siswa: {
+        nis: siswa.nis,
+        nisn: siswa.nisn,
+        nama_siswa: siswa.nama_siswa,
+        tempat_lahir: siswa.tempat_lahir,
+        tanggal_lahir: siswa.tanggal_lahir,
+        alamat: siswa.alamat,
+        jenis_kelamin: siswa.jenis_kelamin,
+        agama: siswa.agama,
+        no_telepon: siswa.no_telepon,
+        foto_profil: siswa.foto_profil
+      },
+      kelas: {
+        kelas_id: kelas.kelas_id,
+        nama_kelas: kelas.nama_kelas,
+        tingkat: kelas.tingkat,
+        jenjang: kelas.jenjang,
+        tahun_akademik_id: kelas.tahun_akademik_id,
+        tahun_mulai: kelas.tahun_mulai,
+        tahun_berakhir: kelas.tahun_berakhir,
+        nama_kurikulum: kelas.nama_kurikulum,
+        wali_kelas: kelas.wali_kelas,
+        foto_wali_kelas: kelas.foto_wali_kelas
+      },
+      nilai: nilaiList,
+      statistik: {
+        total_mapel: totalMapel,
+        total_tuntas: totalTuntas,
+        total_belum_tuntas: totalBelumTuntas,
+        total_belum_lengkap: nilaiList.length - totalMapel,
+        rata_rata_pengetahuan: rataRataPengetahuan,
+        rata_rata_keterampilan: rataRataKeterampilan,
+        rata_rata_nilai_akhir: rataRataAkhir
+      },
+      catatan: {
+        tanggal_cetak: new Date().toISOString(),
+        keterangan: 'Rapor ini dicetak secara elektronik dan sah tanpa tanda tangan basah'
+      }
+    };
+
+    // 6. Generate PDF
+    const pdfResult = await generateRaporPdf(pdfData);
+
+    // 7. Response
     res.status(200).json({
       message: 'Detail rapor siswa berhasil diambil',
       status: 200,
       data: {
-        biodata: {
-          nis: siswa.nis,
-          nisn: siswa.nisn,
-          nama: siswa.nama_siswa,
-          tempat_lahir: siswa.tempat_lahir,
-          tanggal_lahir: siswa.tanggal_lahir,
-          foto_profil: siswa.foto_profil,
-          alamat: siswa.alamat,
-          jenis_kelamin: siswa.jenis_kelamin,
-          agama: siswa.agama,
-          no_telepon: siswa.no_telepon
-        },
-        
-        kelas: {
-          id: kelas.kelas_id,
-          nama_kelas: kelas.nama_kelas,
-          tingkat: kelas.tingkat,
-          jenjang: kelas.jenjang,
-          tahun_akademik: {
-            id: kelas.tahun_akademik_id,
-            periode: `${new Date(kelas.tahun_mulai).getFullYear()}/${new Date(kelas.tahun_berakhir).getFullYear()}`,
-            tahun_mulai: kelas.tahun_mulai,
-            tahun_berakhir: kelas.tahun_berakhir
-          },
-          kurikulum: kelas.nama_kurikulum,
-          wali_kelas: {
-            nip: kelas.wali_kelas_nip,
-            nama: kelas.wali_kelas,
-            foto_profil: kelas.foto_wali_kelas
-          }
-        },
-        
-        nilai: nilaiList.map(n => ({
-          mapel_id: n.mapel_id,
-          nama_mapel: n.nama_mapel,
-          nilai_pengetahuan: n.nilai_pengetahuan,
-          nilai_keterampilan: n.nilai_keterampilan,
-          nilai_akhir: n.nilai_akhir,
-          kkm: n.kkm,
-          status: n.status,
-          guru_pengampu: n.guru_pengampu
-        })),
-        
-        statistik: {
-          total_mapel: totalMapel,
-          total_tuntas: totalTuntas,
-          total_belum_tuntas: totalBelumTuntas,
-          total_belum_lengkap: nilaiList.length - totalMapel,
-          rata_rata_pengetahuan: rataRataPengetahuan,
-          rata_rata_keterampilan: rataRataKeterampilan,
-          rata_rata_nilai_akhir: rataRataAkhir
-        },
-        
-        catatan: {
-          tanggal_cetak: new Date().toISOString(),
-          keterangan: 'Rapor ini dicetak secara elektronik dan sah tanpa tanda tangan basah'
-        }
+        ...pdfData,
+        pdf_url: pdfResult.filePath,
+        download_url: `/api/dashboard/rapor/download/${path.basename(pdfResult.filename)}`
       }
     });
 
@@ -1065,4 +1058,19 @@ const getDetailRaporSiswa = async (req, res) => {
   }
 };
 
-module.exports = {getBiodataSiswa, getJadwalSiswa, editDataDiriSiswa, getBerita, getMateriSiswa, getTugasSiswa, editTugasSiswa, getBeritaById, getDashboardRingkasanSiswa, getJadwalSiswabyhari, getMateriHariIni, getStatistikNilaiSiswa, getDetailKelas, getDetailRaporSiswa  };
+// Tambahkan fungsi untuk download PDF
+const downloadRaporPdf = async (req, res) => {
+  const { filename } = req.params;
+  const filePath = path.join(__dirname, '../public/reports', filename);
+
+  if (fs.existsSync(filePath)) {
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
+    fs.createReadStream(filePath).pipe(res);
+  } else {
+    res.status(404).json({ message: 'File rapor tidak ditemukan' });
+  }
+};
+
+module.exports = {getBiodataSiswa, getJadwalSiswa, editDataDiriSiswa, getBerita, getMateriSiswa, getTugasSiswa, editTugasSiswa, getBeritaById, getDashboardRingkasanSiswa, getJadwalSiswabyhari, getMateriHariIni, getStatistikNilaiSiswa, getDetailKelas, getDetailRaporSiswa, downloadRaporPdf  };
+

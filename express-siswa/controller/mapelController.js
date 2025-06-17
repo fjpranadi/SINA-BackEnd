@@ -49,6 +49,7 @@ const getJumlahTugasMateri = async (req, res) => {
 
 
 // GET nama mapel dan nama kelas
+// GET nama mapel, nama kelas, nama guru, dan foto profil guru
 const getMapelKelas = async (req, res) => {
   try {
     const userId = req.user.userId;
@@ -64,17 +65,20 @@ const getMapelKelas = async (req, res) => {
     const nis = siswaRows[0].nis;
 
     const [rows] = await db.query(`
-    SELECT
-      mp.mapel_id,
-      kls.nama_kelas,
-      mp.nama_mapel
-    FROM krs
-    JOIN kelas kls ON krs.kelas_id = kls.kelas_id
-    JOIN krs_detail kd ON krs.krs_id = kd.krs_id
-    JOIN mapel mp ON kd.mapel_id = mp.mapel_id
-    WHERE krs.siswa_nis = ?
-    GROUP BY kls.nama_kelas, mp.mapel_id, mp.nama_mapel
-    ORDER BY kls.nama_kelas, mp.nama_mapel;
+      SELECT
+        mp.mapel_id,
+        kls.nama_kelas,
+        mp.nama_mapel,
+        g.nama_guru,
+        g.foto_profil
+      FROM krs
+      JOIN kelas kls ON krs.kelas_id = kls.kelas_id
+      JOIN krs_detail kd ON krs.krs_id = kd.krs_id
+      JOIN mapel mp ON kd.mapel_id = mp.mapel_id
+      JOIN guru g ON kd.guru_nip = g.nip
+      WHERE krs.siswa_nis = ?
+      GROUP BY kls.nama_kelas, mp.mapel_id, mp.nama_mapel, g.nama_guru, g.foto_profil
+      ORDER BY kls.nama_kelas, mp.nama_mapel;
     `, [nis]);
 
     res.status(200).json({

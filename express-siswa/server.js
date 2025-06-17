@@ -12,6 +12,8 @@ app.use('/Upload/profile_image', express.static(path.join(__dirname, 'Upload/pro
 
 app.use('/Upload/tugas', express.static(path.join(__dirname, 'Upload/tugas')));
 
+app.use('/reports', express.static(path.join(__dirname, 'public/reports')));
+
 // PASANG CORS DI SINI
 app.use(cors({
   origin: 'http://localhost:5173', // sesuaikan dengan frontend kamu
