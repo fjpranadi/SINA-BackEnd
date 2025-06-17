@@ -1127,7 +1127,6 @@ const getMateriDetailById = async (req, res) => {
   }
 };
 
-// Ambil status absensi guru hari ini berdasarkan jadwal
 const getAbsensiByJadwal = async (req, res) => {
   const userId = req.user.userId;
   const { jadwal_id } = req.params;
@@ -1158,9 +1157,8 @@ const getAbsensiByJadwal = async (req, res) => {
       });
     }
 
-    // Ambil data absensi berdasarkan jadwal_id
     const [absensiList] = await db.query(`
-      SELECT 
+      SELECT
         s.nama_siswa,
         s.nis,
         a.keterangan,
@@ -1171,7 +1169,8 @@ const getAbsensiByJadwal = async (req, res) => {
       JOIN krs k ON kd.krs_id = k.krs_id
       JOIN siswa s ON k.siswa_nis = s.nis
       WHERE a.jadwal_id = ?
-      ORDER BY a.tanggal DESC
+      GROUP BY s.nama_siswa, s.nis, a.keterangan, a.uraian, tanggal
+      ORDER BY tanggal DESC
     `, [jadwal_id]);
 
     res.status(200).json({
@@ -1196,9 +1195,14 @@ const createAbsensiSiswa = async (req, res) => {
   const tanggal = new Date();
 
   try {
+    // Ambil NIP guru
     const [[guru]] = await db.query('SELECT nip FROM guru WHERE user_id = ?', [userId]);
-    const guru_nip = guru?.nip;
+    if (!guru) {
+      return res.status(404).json({ success: false, message: 'Guru tidak ditemukan' });
+    }
+    const guru_nip = guru.nip;
 
+    // Validasi apakah guru memang mengajar jadwal ini
     const [[jadwal]] = await db.query(`
       SELECT j.*
       FROM jadwal j
@@ -1209,46 +1213,71 @@ const createAbsensiSiswa = async (req, res) => {
     `, [jadwal_id, guru_nip]);
 
     if (!jadwal) {
-      return res.status(403).json({ success: false, message: 'Jadwal tidak ditemukan atau bukan milik Anda' });
+      return res.status(403).json({
+        success: false,
+        message: 'Jadwal tidak ditemukan atau bukan milik Anda'
+      });
     }
 
-    const absensiRecords = absensiData.map(item => ([
-      uuidv4(),
-      jadwal_id,
-      item.krs_id,
-      guru_nip,
-      item.keterangan,
-      tanggal,
-      item.uraian || '',
-      null, // surat
-      new Date()
-    ]));
+    // Cek dan siapkan data absensi (hindari duplikat)
+    const absensiRecords = [];
 
-    await db.query(`
-      INSERT INTO absensi (
-        absensi_id,
+    for (const item of absensiData) {
+      const [existing] = await db.query(`
+        SELECT 1 FROM absensi 
+        WHERE jadwal_id = ? AND krs_id = ? AND DATE(tanggal) = CURDATE()
+      `, [jadwal_id, item.krs_id]);
+
+      if (existing.length > 0) {
+        continue; // skip jika sudah absen hari ini
+      }
+
+      absensiRecords.push([
+        uuidv4(),
         jadwal_id,
-        krs_id,
+        item.krs_id,
         guru_nip,
-        keterangan,
+        item.keterangan,
         tanggal,
-        uraian,
-        surat,
-        created_at
-      ) VALUES ?
-    `, [absensiRecords]);
+        item.uraian || '',
+        null, // surat
+        new Date()
+      ]);
+    }
+
+    // Insert absensi jika ada data valid
+    if (absensiRecords.length > 0) {
+      await db.query(`
+        INSERT INTO absensi (
+          absensi_id,
+          jadwal_id,
+          krs_id,
+          guru_nip,
+          keterangan,
+          tanggal,
+          uraian,
+          surat,
+          created_at
+        ) VALUES ?
+      `, [absensiRecords]);
+    }
 
     res.status(201).json({
       success: true,
       message: 'Absensi berhasil dicatat',
-      jumlah: absensiData.length
+      jumlah_dicatat: absensiRecords.length
     });
 
   } catch (error) {
     console.error('Error createAbsensiSiswa:', error);
-    res.status(500).json({ success: false, message: 'Gagal mencatat absensi', error: error.message });
-  }
+    res.status(500).json({
+      success: false,
+      message: 'Gagal mencatat absensi',
+      error: error.message
+    });
+  }
 };
+
 
 const getBerita = async (req, res) => {
   try {
@@ -1979,6 +2008,62 @@ const downloadRaporPdf = async (req, res) => {
   }
 };
 
+const getSuratIzinSakit = async (req, res) => {
+  try {
+    // Ambil nip guru dari user login
+    const [[guru]] = await db.query('SELECT nip FROM guru WHERE user_id = ?', [req.user.userId]);
+    if (!guru) {
+      return res.status(404).json({ success: false, message: 'Guru tidak ditemukan' });
+    }
+
+    // Ambil semua absensi ijin/sakit yang punya dokumen surat
+    const [rows] = await db.query(`
+      SELECT 
+        a.absensi_id,
+        s.nama_siswa,
+        s.nis,
+        DATE(a.tanggal) AS tanggal_izin,
+        a.keterangan,
+        a.uraian,
+        a.surat
+      FROM absensi a
+      JOIN krs k ON a.krs_id = k.krs_id
+      JOIN siswa s ON k.siswa_nis = s.nis
+      WHERE a.keterangan IN ('i', 's') AND a.surat IS NOT NULL
+      ORDER BY a.tanggal DESC
+    `);
+
+    res.json({ success: true, data: rows });
+  } catch (err) {
+    console.error('getSuratIzinSakit Error:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Gagal mengambil data surat izin/sakit',
+      error: err.message
+    });
+  }
+};
+
+
+const setujuiSuratIzin = async (req, res) => {
+  const { absensi_id } = req.params;
+
+  try {
+    const [cek] = await db.query(`SELECT * FROM absensi WHERE absensi_id = ?`, [absensi_id]);
+    if (!cek.length) {
+      return res.status(404).json({ success: false, message: 'Surat tidak ditemukan' });
+    }
+
+    await db.query(`UPDATE absensi SET uraian = 'Disetujui' WHERE absensi_id = ?`, [absensi_id]);
+
+    res.json({ success: true, message: 'Surat izin berhasil disetujui' });
+  } catch (err) {
+    console.error('setujuiSuratIzin Error:', err);
+    res.status(500).json({ success: false, message: 'Gagal memproses surat', error: err.message });
+  }
+};
+
+
 
 // Add these to your exports
 module.exports = {
@@ -2005,5 +2090,7 @@ createBeritaGuru,
   deleteBeritaGuru,
 getSiswaPengumpulanTugas,
 beriNilaiTugasSiswa,
-downloadRaporPdf
+downloadRaporPdf,
+getSuratIzinSakit,
+setujuiSuratIzin
 };
