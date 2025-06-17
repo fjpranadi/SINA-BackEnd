@@ -2010,13 +2010,9 @@ const downloadRaporPdf = async (req, res) => {
 
 const getSuratIzinSakit = async (req, res) => {
   try {
-    // Ambil nip guru dari user login
     const [[guru]] = await db.query('SELECT nip FROM guru WHERE user_id = ?', [req.user.userId]);
-    if (!guru) {
-      return res.status(404).json({ success: false, message: 'Guru tidak ditemukan' });
-    }
+    if (!guru) return res.status(404).json({ success: false, message: 'Guru tidak ditemukan' });
 
-    // Ambil semua absensi ijin/sakit yang punya dokumen surat
     const [rows] = await db.query(`
       SELECT 
         a.absensi_id,
@@ -2024,28 +2020,47 @@ const getSuratIzinSakit = async (req, res) => {
         s.nis,
         DATE(a.tanggal) AS tanggal_izin,
         a.keterangan,
-        a.uraian,
-        a.surat
+        a.surat,
+        a.status_surat
       FROM absensi a
       JOIN krs k ON a.krs_id = k.krs_id
       JOIN siswa s ON k.siswa_nis = s.nis
-      WHERE a.keterangan IN ('i', 's') AND a.surat IS NOT NULL
+      WHERE a.keterangan IN ('i', 's') AND a.status_surat = 'menunggu'
       ORDER BY a.tanggal DESC
     `);
 
     res.json({ success: true, data: rows });
   } catch (err) {
     console.error('getSuratIzinSakit Error:', err);
-    res.status(500).json({
-      success: false,
-      message: 'Gagal mengambil data surat izin/sakit',
-      error: err.message
-    });
+    res.status(500).json({ success: false, message: 'Gagal mengambil data surat izin/sakit' });
   }
 };
 
 
+
 const setujuiSuratIzin = async (req, res) => {
+  try {
+    const { absensi_id } = req.params;
+
+    const [result] = await db.query(
+      `UPDATE absensi SET status_surat = 'terima' WHERE absensi_id = ?`,
+      [absensi_id]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: 'Surat tidak ditemukan' });
+    }
+
+    res.json({ success: true, message: 'Surat izin berhasil disetujui' });
+  } catch (err) {
+    console.error('setujuiSuratIzin Error:', err);
+    res.status(500).json({ success: false, message: 'Gagal menyetujui surat izin' });
+  }
+};
+
+
+
+const tolakSuratIzin = async (req, res) => {
   const { absensi_id } = req.params;
 
   try {
@@ -2054,14 +2069,15 @@ const setujuiSuratIzin = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Surat tidak ditemukan' });
     }
 
-    await db.query(`UPDATE absensi SET uraian = 'Disetujui' WHERE absensi_id = ?`, [absensi_id]);
+    await db.query(`UPDATE absensi SET status_surat = 'tolak' WHERE absensi_id = ?`, [absensi_id]);
 
-    res.json({ success: true, message: 'Surat izin berhasil disetujui' });
+    res.json({ success: true, message: 'Surat izin ditolak' });
   } catch (err) {
-    console.error('setujuiSuratIzin Error:', err);
+    console.error('tolakSuratIzin Error:', err);
     res.status(500).json({ success: false, message: 'Gagal memproses surat', error: err.message });
   }
 };
+
 
 
 
@@ -2092,5 +2108,6 @@ getSiswaPengumpulanTugas,
 beriNilaiTugasSiswa,
 downloadRaporPdf,
 getSuratIzinSakit,
-setujuiSuratIzin
+setujuiSuratIzin,
+tolakSuratIzin
 };

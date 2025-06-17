@@ -26,7 +26,8 @@ getSiswaPengumpulanTugas,
 beriNilaiTugasSiswa,
 getAbsensiByJadwal,
 getSuratIzinSakit,
-setujuiSuratIzin 
+setujuiSuratIzin,
+tolakSuratIzin 
 } = require('../controller/dashboardController');
 const { getJadwalKelas } = require('../controller/jadwalController');
 const { getProfileGuru, updateProfileGuru } = require('../controller/profileController');
@@ -86,7 +87,9 @@ router.get('/dashboard/rapor/statistik', verifyToken, getStatistikNilai);
 
 //verifikasi surat
 router.get('/dashboard/surat-izin', verifyToken, getSuratIzinSakit);
-router.put('/dashboard/surat-izin/:absensi_id', verifyToken, setujuiSuratIzin);
+router.put('/dashboard/surat-izin/:absensi_id/terima', verifyToken, setujuiSuratIzin);
+router.put('/dashboard/surat-izin/:absensi_id/tolak', verifyToken, tolakSuratIzin);
+
 
 
 module.exports = router;
