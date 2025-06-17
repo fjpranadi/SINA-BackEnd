@@ -23,13 +23,15 @@ createBeritaGuru,
   updateBeritaGuru,
   deleteBeritaGuru,
 getSiswaPengumpulanTugas,
-beriNilaiTugasSiswa 
+beriNilaiTugasSiswa,
+getAbsensiByJadwal
 } = require('../controller/dashboardController');
 const { getJadwalKelas } = require('../controller/jadwalController');
 const { getProfileGuru, updateProfileGuru } = require('../controller/profileController');
 const uploadlampirantugas = require('../middleware/uploadtugasMiddleware'); 
 const uploadberitaguru = require('../middleware/uploadBeritaGuru');
-
+const { getListRapor, getSemesterOptions, getStatistikNilai } = require('../controller/raporController');
+const absensiController = require('../controller/absensiController');
 // Dashboard
 router.get('/dashboard/', verifyToken, getdashboard);
 router.get('/dashboard/jadwal/', verifyToken, getJadwalGuru);
@@ -51,7 +53,9 @@ router.delete('/dashboard/materi/:materi_id', verifyToken, deleteMateriById);
 router.get('/dashboard/mapel/:mapel_id/tugas/:tugas_id', verifyToken, getSiswaPengumpulanTugas );
 router.get('/dashboard/mapel/:mapel_id/tugas/:tugas_id/siswa/:krs_id/', verifyToken, beriNilaiTugasSiswa );
 
-router.post('/dashboard/absensi/:mapel_id', verifyToken, createAbsensiSiswa);
+
+router.get('/dashboard/absensi/:jadwal_id', verifyToken, getAbsensiByJadwal);
+router.post('/dashboard/absensi/:jadwal_id', verifyToken, createAbsensiSiswa);
 
 router.get('/dashboard/berita', verifyToken, getBerita);
 router.get('/dashboard/berita/:id', verifyToken, getBeritaById);
@@ -72,5 +76,10 @@ router.get('/dashboard/materi/detail/:materi_id', verifyToken, getMateriDetailBy
 // Profile
 router.get('/dashboard/profile', verifyToken, getProfileGuru);
 router.put('/dashboard/profile', verifyToken, updateProfileGuru);
+
+// Rapor
+router.get('/dashboard/rapor', verifyToken, getListRapor);
+router.get('/dashboard/rapor/semester-options', verifyToken, getSemesterOptions);
+router.get('/dashboard/rapor/statistik', verifyToken, getStatistikNilai);
 
 module.exports = router;
