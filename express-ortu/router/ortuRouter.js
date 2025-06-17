@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { verifyToken } = require('../controller/authController');
-const { getBiodataOrtu, getSiswaByOrtu, getBerita, editBiodataOrtu, getStatistikNilai, getRekapAbsensi, postSuratIzin, getTugasSiswa} = require('../controller/dashboardController');
+const { getBiodataOrtu, getSiswaByOrtu, getBerita, editBiodataOrtu, getStatistikNilai, getRekapAbsensi, postSuratIzin, getTugasSiswa, getRiwayatAbsensiAnak} = require('../controller/dashboardController');
 const uploadprofile = require('../middleware/uploadProfile');
 const uploadSurat = require('../middleware/uploadSurat');
 
@@ -18,5 +18,6 @@ router.post(
   postSuratIzin
 );
 router.get('/dashboard/tugas/', verifyToken, getTugasSiswa);
+router.get('/dashboard/absensi/riwayat', verifyToken, getRiwayatAbsensiAnak);
 
 module.exports = router;
