@@ -104,17 +104,58 @@ const inputNilaiRaporGuru = async (req, res) => {
     });
 
   } catch (err) {
-    console.error('❌ ERROR:', err);
+    console.error(' ERROR:', err);
     return res.status(500).json({
       message: 'Gagal menyimpan nilai rapor',
       error: err.message
     });
   }
 };
+const getStatistikNilaiBySiswaAndTahun = async (req, res) => {
+  const { krs_id } = req.params;
+  const { tahun_akademik_id } = req.query;
+
+  if (!tahun_akademik_id) {
+    return res.status(400).json({
+      success: false,
+      message: 'tahun_akademik_id wajib diisi'
+    });
+  }
+
+  try {
+    const [rows] = await db.query(`
+      SELECT 
+        m.nama_mapel,
+        kd.nilai,
+        DATE_FORMAT(ta.tahun_mulai, '%Y-%m-%d') AS tahun_mulai,
+        kl.tingkat AS tingkat
+      FROM krs_detail kd
+      JOIN krs k ON kd.krs_id = k.krs_id
+      JOIN mapel m ON kd.mapel_id = m.mapel_id
+      JOIN kelas kl ON k.kelas_id = kl.kelas_id
+      JOIN tahun_akademik ta ON kl.tahun_akademik_id = ta.tahun_akademik_id
+      WHERE k.krs_id = ? AND ta.tahun_akademik_id LIKE CONCAT(?, '%')
+    `, [krs_id, tahun_akademik_id]);
+
+    res.status(200).json({
+      success: true,
+      data: rows
+    });
+  } catch (err) {
+    console.error('getStatistikNilaiBySiswaAndTahun error:', err);
+    res.status(500).json({
+      success: false,
+      message: 'Gagal mengambil data statistik',
+      error: err.message
+    });
+  }
+};
+
 
 module.exports = {
   getMapelByGuru,
   getKelasByMapelGuru,
   getSiswaByKelasAndMapel,
-  inputNilaiRaporGuru
-};
+  inputNilaiRaporGuru,
+  getStatistikNilaiBySiswaAndTahun 
+}
