@@ -70,4 +70,44 @@ const updateProfileGuru = async (req, res) => {
     res.status(500).json({ status: 500, message: 'Gagal memperbarui profil guru.' });
   }
 };
-module.exports = { getProfileGuru, updateProfileGuru };
+
+const updatePasswordGuru = async (req, res) => {
+  const userId = req.user.userId;
+  const { password_lama, password_baru, konfirmasi_password } = req.body;
+
+  try {
+    // Validasi input
+    if (!password_lama || !password_baru || !konfirmasi_password) {
+      return res.status(400).json({ message: 'Semua field harus diisi.' });
+    }
+
+    if (password_baru !== konfirmasi_password) {
+      return res.status(400).json({ message: 'Password baru dan konfirmasi tidak cocok.' });
+    }
+
+    // Ambil data user dari tabel login (bukan dari guru)
+    const [[user]] = await db.query('SELECT * FROM user WHERE user_id = ?', [userId]);
+    if (!user) {
+      return res.status(404).json({ message: 'User tidak ditemukan.' });
+    }
+
+    // Cek password lama
+    const passwordBenar = password_lama === user.password; //pakai bcrypt kalau sudah dienkripsi
+    if (!passwordBenar) {
+      return res.status(401).json({ message: 'Password lama salah.' });
+    }
+
+    // Update password
+    await db.query(
+      'UPDATE user SET password = ? WHERE user_id = ?',
+      [password_baru, userId] // → pakai bcrypt.hash(password_baru, 10) jika terenkripsi
+    );
+
+    return res.status(200).json({ message: 'Password berhasil diperbarui.' });
+  } catch (err) {
+    console.error('ERROR updatePasswordGuru:', err);
+    return res.status(500).json({ message: 'Gagal memperbarui password.', error: err.message });
+  }
+};
+
+module.exports = { getProfileGuru, updateProfileGuru, updatePasswordGuru };

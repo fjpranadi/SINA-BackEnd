@@ -30,11 +30,18 @@ setujuiSuratIzin,
 tolakSuratIzin 
 } = require('../controller/dashboardController');
 const { getJadwalKelas } = require('../controller/jadwalController');
-const { getProfileGuru, updateProfileGuru } = require('../controller/profileController');
+const { getProfileGuru, updateProfileGuru, updatePasswordGuru } = require('../controller/profileController');
 const uploadlampirantugas = require('../middleware/uploadtugasMiddleware'); 
 const uploadberitaguru = require('../middleware/uploadBeritaGuru');
 const { getListRapor, getSemesterOptions, getStatistikNilai } = require('../controller/raporController');
 const absensiController = require('../controller/absensiController');
+const {
+  getMapelByGuru,
+  getKelasByMapelGuru,
+  getSiswaByKelasAndMapel,
+  inputNilaiRaporGuru
+} = require('../controller/raportsiswaController');
+
 // Dashboard
 router.get('/dashboard/', verifyToken, getdashboard);
 router.get('/dashboard/jadwal/', verifyToken, getJadwalGuru);
@@ -79,6 +86,7 @@ router.get('/dashboard/materi/detail/:materi_id', verifyToken, getMateriDetailBy
 // Profile
 router.get('/dashboard/profile', verifyToken, getProfileGuru);
 router.put('/dashboard/profile', verifyToken, updateProfileGuru);
+router.put('/dashboard/profile/password', verifyToken, updatePasswordGuru);
 
 // Rapor
 router.get('/dashboard/rapor', verifyToken, getListRapor);
@@ -90,6 +98,9 @@ router.get('/dashboard/surat-izin', verifyToken, getSuratIzinSakit);
 router.put('/dashboard/surat-izin/:absensi_id/terima', verifyToken, setujuiSuratIzin);
 router.put('/dashboard/surat-izin/:absensi_id/tolak', verifyToken, tolakSuratIzin);
 
-
-
+// Raport
+router.get('/dashboard/nilai/mapel', verifyToken, getMapelByGuru);
+router.get('/dashboard/nilai/mapel/:mapel_id/kelas', verifyToken, getKelasByMapelGuru);
+router.get('/dashboard/nilai/mapel/:mapel_id/kelas/:kelas_id/siswa', verifyToken, getSiswaByKelasAndMapel);
+router.put('/dashboard/nilai/:krs_id/:status', verifyToken, inputNilaiRaporGuru);
 module.exports = router;
