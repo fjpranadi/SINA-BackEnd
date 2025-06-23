@@ -1,16 +1,14 @@
+// middleware/uploadSurat.js
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 
-// Buat direktori jika belum ada
-const dir = 'Upload/surat';
-if (!fs.existsSync(dir)) {
-  fs.mkdirSync(dir, { recursive: true });
-}
-
-// Konfigurasi storage
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
+    const dir = 'Upload/surat';
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
     cb(null, dir);
   },
   filename: (req, file, cb) => {
@@ -21,23 +19,20 @@ const storage = multer.diskStorage({
   }
 });
 
-// Filter file
 const fileFilter = (req, file, cb) => {
-  const allowedTypes = ['.pdf', '.jpg', '.jpeg', '.png'];
-  const ext = path.extname(file.originalname).toLowerCase();
-
-  if (allowedTypes.includes(ext)) {
+  if (file.mimetype === 'application/pdf') {
     cb(null, true);
   } else {
-    cb(new Error('File harus berupa PDF, JPG, JPEG, atau PNG'));
+    cb(new Error('Hanya file PDF yang diperbolehkan'), false);
   }
 };
 
-// Batas ukuran: 2MB
-const uploadSurat = multer({
+const uploadSurat = multer({ 
   storage: storage,
-  limits: { fileSize: 2 * 1024 * 1024 }, // 2MB
-  fileFilter: fileFilter
+  fileFilter: fileFilter,
+  limits: {
+    fileSize: 1024 * 1024 * 5 // Batas 5MB
+  }
 });
 
 module.exports = uploadSurat;

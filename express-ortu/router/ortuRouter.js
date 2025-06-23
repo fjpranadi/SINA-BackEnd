@@ -1,23 +1,40 @@
 const express = require('express');
 const router = express.Router();
 const { verifyToken } = require('../controller/authController');
-const { getBiodataOrtu, getSiswaByOrtu, getBerita, editBiodataOrtu, getStatistikNilai, getRekapAbsensi, postSuratIzin, getTugasSiswa} = require('../controller/dashboardController');
-const uploadprofile = require('../middleware/uploadProfile');
+const { 
+  getBiodataOrtu, 
+  getSiswaByOrtu, 
+  getBerita, 
+  editBiodataOrtu,
+  submitSuratIzin,
+  getDashboardCountOrtu,
+  getJadwalSiswaOrtu,
+  getJadwalSiswaOrtuByHari,
+  getRiwayatAbsensiSiswa,
+  getStatistikNilaiSiswa,
+  getRiwayatSuratIzin,
+  getDetailSuratIzin,
+  getListRaporSiswa,
+  getDetailRaporSiswa
+} = require('../controller/dashboardController');
+
 const uploadSurat = require('../middleware/uploadSurat');
+const uploadprofile = require('../middleware/uploadProfile');
+
 
 router.get('/dashboard/biodata', verifyToken, getBiodataOrtu);
 router.get('/dashboard/siswa', verifyToken, getSiswaByOrtu);
 router.get('/dashboard/berita', verifyToken, getBerita);
-router.put('/dashboard/biodata', verifyToken, uploadprofile.single('foto_profil'), editBiodataOrtu); //perubahan dari sini
-router.get('/dashboard/nilai/', verifyToken, getStatistikNilai);
-router.get('/dashboard/absen/', verifyToken, getRekapAbsensi);
-router.post(
-  '/dashboard/surat-izin',
-  verifyToken,
-  uploadSurat.single('surat'),  // harus sesuai field file di form-data Postman
-  postSuratIzin
-);
-router.get('/dashboard/tugas/', verifyToken, getTugasSiswa);
-
+router.put('/dashboard/biodata', verifyToken, uploadprofile.single('foto_profil'), editBiodataOrtu);
+router.post('/dashboard/ajukan-surat', verifyToken, uploadSurat.single('surat'), submitSuratIzin);
+router.get('/dashboard/:nis', verifyToken, getDashboardCountOrtu);
+router.get('/dashboard/jadwal/:nis', verifyToken, getJadwalSiswaOrtu);
+router.get('/dashboard/jadwal/:nis/:hari', verifyToken, getJadwalSiswaOrtuByHari);
+router.get('/dashboard/riwayat-absensi/:nis', verifyToken, getRiwayatAbsensiSiswa);
+router.get('/dashboard/statistik/:nis', verifyToken, getStatistikNilaiSiswa);
+router.get('/dashboard/surat-izin/:nis', verifyToken, getRiwayatSuratIzin);
+router.get('/dashboard/surat-izin/detail/:absensi_id', verifyToken, getDetailSuratIzin);
+router.get('/dashboard/rapor/:nis', verifyToken, getListRaporSiswa);
+router.get('/dashboard/rapor/detail/:krs_id', verifyToken, getDetailRaporSiswa);
 
 module.exports = router;
