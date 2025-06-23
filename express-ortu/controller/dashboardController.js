@@ -843,6 +843,119 @@ const getStatistikNilaiSiswa = async (req, res) => {
   }
 };
 
+const getListRaporSiswa = async (req, res) => {
+  const userId = req.user.userId;
+
+  try {
+    const [ortuResult] = await db.query('CALL ortu_profile(?)', [userId]);
+    const ortu = ortuResult[0][0];
+    console.log('ORTU DATA:', ortu);
+
+    if (!ortu || !ortu.nik) {
+      return res.status(404).json({ message: 'Data ortu tidak ditemukan' });
+    }
+
+    const [anakList] = await db.query('CALL sp_read_siswa_ortu_by_nik(?)', [ortu.nik]);
+    const hasil = [];
+
+    for (const anak of anakList[0]) {
+      const [kelasList] = await db.query('CALL sp_read_list_kelas_siswa(?)', [anak.nis]);
+
+      hasil.push({
+        nis: anak.nis,
+        nama: anak.nama_siswa,
+        riwayat_rapor: kelasList[0].map(k => ({
+          krs_id: k.krs_id,
+          nama_kelas: `${k.tingkat}/${k.semester}`
+        }))
+      });
+    }
 
 
-module.exports = {getBiodataOrtu, getSiswaByOrtu, getBerita, editBiodataOrtu, getDashboardCountOrtu, getJadwalSiswaOrtu, getJadwalSiswaOrtuByHari, submitSuratIzin, getRiwayatAbsensiSiswa, getStatistikNilaiSiswa, getRiwayatSuratIzin, getDetailSuratIzin};
+    return res.status(200).json({
+      message: 'List rapor berhasil diambil',
+      data: hasil
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: 'Gagal mengambil list rapor', error: err.message });
+  }
+};
+
+
+const getDetailRaporSiswa = async (req, res) => {
+  const { krs_id } = req.params;
+  const userId = req.user.userId;
+
+  try {
+    // 1. Ambil data ortu
+    const [[ortuResult]] = await db.query('CALL ortu_profile(?)', [userId]);
+    const ortu = ortuResult[0]; // karena hasil CALL adalah array dua lapis
+    const nik = ortu?.nik;
+    if (!nik) return res.status(403).json({ message: 'Data ortu tidak ditemukan' });
+
+    // 2. Ambil semua anak dari ortu ini
+    const [anakList] = await db.query('CALL sp_read_siswa_ortu_by_nik(?)', [nik]);
+    let anak = null;
+
+    for (const a of anakList[0]) {
+      const [kelasList] = await db.query('CALL sp_read_list_kelas_siswa(?)', [a.nis]);
+
+      // cari apakah salah satu kelas anak memiliki krs_id yang diminta
+      if (kelasList[0]?.find(k => k.krs_id === krs_id)) {
+        anak = a;
+        break;
+      }
+    }
+
+    if (!anak) {
+      return res.status(403).json({ message: 'Anda tidak memiliki akses ke data rapor ini' });
+    }
+
+    // 3. Ambil nilai dari sp_read_siswa_detail_krs
+    const [nilaiResult] = await db.query('CALL sp_read_siswa_detail_krs(?)', [krs_id]);
+    const nilaiList = nilaiResult[0];
+
+    return res.status(200).json({
+      message: 'Detail rapor berhasil diambil',
+      data: {
+        krs_id,
+        nama: anak.nama_siswa,
+        nilai: nilaiList.map(n => ({
+          nama_mapel: n.nama_mapel,
+          nilai: n.nilai,
+          kategori: getKategori(n.nilai)
+        }))
+      }
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Gagal mengambil detail rapor', error: err.message });
+  }
+};
+
+// Fungsi bantu kategori nilai
+function getKategori(nilai) {
+  if (nilai >= 85) return 'A';
+  if (nilai >= 75) return 'B';
+  if (nilai >= 65) return 'C';
+  return 'D';
+}
+
+
+
+module.exports = {
+  getBiodataOrtu, 
+  getSiswaByOrtu, 
+  getBerita, 
+  editBiodataOrtu, 
+  getDashboardCountOrtu, 
+  getJadwalSiswaOrtu, 
+  getJadwalSiswaOrtuByHari, 
+  submitSuratIzin, 
+  getRiwayatAbsensiSiswa, 
+  getStatistikNilaiSiswa, 
+  getRiwayatSuratIzin, 
+  getDetailSuratIzin, 
+  getListRaporSiswa, 
+  getDetailRaporSiswa};

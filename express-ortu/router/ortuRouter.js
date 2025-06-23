@@ -13,7 +13,9 @@ const {
   getRiwayatAbsensiSiswa,
   getStatistikNilaiSiswa,
   getRiwayatSuratIzin,
-  getDetailSuratIzin  
+  getDetailSuratIzin,
+  getListRaporSiswa,
+  getDetailRaporSiswa
 } = require('../controller/dashboardController');
 
 const uploadSurat = require('../middleware/uploadSurat');
@@ -32,5 +34,7 @@ router.get('/dashboard/riwayat-absensi/:nis', verifyToken, getRiwayatAbsensiSisw
 router.get('/dashboard/statistik/:nis', verifyToken, getStatistikNilaiSiswa);
 router.get('/dashboard/surat-izin/:nis', verifyToken, getRiwayatSuratIzin);
 router.get('/dashboard/surat-izin/detail/:absensi_id', verifyToken, getDetailSuratIzin);
+router.get('/dashboard/rapor/:nis', verifyToken, getListRaporSiswa);
+router.get('/dashboard/rapor/detail/:krs_id', verifyToken, getDetailRaporSiswa);
 
 module.exports = router;
