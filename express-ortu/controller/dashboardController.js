@@ -889,19 +889,18 @@ const getDetailRaporSiswa = async (req, res) => {
 
   try {
     // 1. Ambil data ortu
-    const [[ortuResult]] = await db.query('CALL ortu_profile(?)', [userId]);
-    const ortu = ortuResult[0]; // karena hasil CALL adalah array dua lapis
-    const nik = ortu?.nik;
-    if (!nik) return res.status(403).json({ message: 'Data ortu tidak ditemukan' });
+    const [ortuResult] = await db.query('CALL ortu_profile(?)', [userId]);
+    const ortu = ortuResult[0]?.[0];
+    if (!ortu || !ortu.nik) {
+      return res.status(403).json({ message: 'Data ortu tidak ditemukan' });
+    }
 
-    // 2. Ambil semua anak dari ortu ini
-    const [anakList] = await db.query('CALL sp_read_siswa_ortu_by_nik(?)', [nik]);
+    // 2. Ambil anak-anak dari ortu
+    const [anakList] = await db.query('CALL sp_read_siswa_ortu_by_nik(?)', [ortu.nik]);
     let anak = null;
 
     for (const a of anakList[0]) {
       const [kelasList] = await db.query('CALL sp_read_list_kelas_siswa(?)', [a.nis]);
-
-      // cari apakah salah satu kelas anak memiliki krs_id yang diminta
       if (kelasList[0]?.find(k => k.krs_id === krs_id)) {
         anak = a;
         break;
@@ -912,15 +911,26 @@ const getDetailRaporSiswa = async (req, res) => {
       return res.status(403).json({ message: 'Anda tidak memiliki akses ke data rapor ini' });
     }
 
-    // 3. Ambil nilai dari sp_read_siswa_detail_krs
+    // 3. Ambil info kelas dan semester
+    const [kelasList] = await db.query('CALL sp_read_list_kelas_siswa(?)', [anak.nis]);
+    const kelasInfo = kelasList[0].find(k => k.krs_id === krs_id);
+
+    if (!kelasInfo) {
+      return res.status(404).json({ message: 'Informasi kelas tidak ditemukan' });
+    }
+
+    // 4. Ambil daftar nilai
     const [nilaiResult] = await db.query('CALL sp_read_siswa_detail_krs(?)', [krs_id]);
     const nilaiList = nilaiResult[0];
 
+    // 5. Format response
     return res.status(200).json({
       message: 'Detail rapor berhasil diambil',
       data: {
         krs_id,
         nama: anak.nama_siswa,
+        kelas: `${kelasInfo.tingkat} ${kelasInfo.nama_kelas}`,
+        semester: `${kelasInfo.semester}`,
         nilai: nilaiList.map(n => ({
           nama_mapel: n.nama_mapel,
           nilai: n.nilai,
@@ -928,20 +938,20 @@ const getDetailRaporSiswa = async (req, res) => {
         }))
       }
     });
+
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Gagal mengambil detail rapor', error: err.message });
   }
 };
 
-// Fungsi bantu kategori nilai
+// Fungsi untuk mengategorikan nilai
 function getKategori(nilai) {
   if (nilai >= 85) return 'A';
   if (nilai >= 75) return 'B';
   if (nilai >= 65) return 'C';
   return 'D';
 }
-
 
 
 module.exports = {
