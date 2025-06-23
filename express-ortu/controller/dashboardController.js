@@ -209,6 +209,110 @@ const editBiodataOrtu = async (req, res) => {
   }
 };
 
+// Tampilkan semua surat izin yang diajukan ortu untuk siswa
+const getRiwayatSuratIzin = async (req, res) => {
+  const userId = req.user.userId;
+  const { nis } = req.params;
+
+  try {
+    // Verifikasi ortu memiliki akses ke siswa
+    const [ortuData] = await db.query(`
+      SELECT o.nik 
+      FROM ortu o
+      JOIN siswa_ortu so ON o.nik = so.nik
+      WHERE o.user_id = ? AND so.nis = ?
+    `, [userId, nis]);
+
+    if (ortuData.length === 0) {
+      return res.status(403).json({ message: 'Anda tidak memiliki akses ke siswa ini.' });
+    }
+
+    // Ambil riwayat surat izin
+    const [suratRows] = await db.query(`
+      SELECT 
+        a.absensi_id,
+        a.keterangan,
+        a.tanggal,
+        a.status_surat
+      FROM absensi a
+      JOIN krs k ON a.krs_id = k.krs_id
+      WHERE k.siswa_nis = ?
+        AND a.surat IS NOT NULL
+      ORDER BY a.created_at DESC
+    `, [nis]);
+
+    const formatted = suratRows.map(item => ({
+      id: item.absensi_id,
+      jenis: item.keterangan === 's' ? 'Sakit' : 'Izin',
+      tanggal: item.tanggal,
+      status: item.status_surat === 'terima' ? 'Disetujui' :
+              item.status_surat === 'tolak' ? 'Ditolak' :
+              'Diproses'
+    }));
+
+    res.status(200).json({
+      message: 'Riwayat surat izin berhasil diambil',
+      data: formatted
+    });
+
+  } catch (error) {
+    console.error('Gagal mengambil riwayat surat izin:', error);
+    res.status(500).json({ message: 'Gagal mengambil riwayat surat izin', error: error.message });
+  }
+};
+
+
+// Tampilkan detail surat izin berdasarkan absensi_id
+const getDetailSuratIzin = async (req, res) => {
+  const userId = req.user.userId;
+  const { absensi_id } = req.params;
+
+  try {
+    const [detailRows] = await db.query(`
+      SELECT 
+        a.absensi_id,
+        a.keterangan,
+        a.tanggal,
+        a.uraian,
+        a.surat,
+        a.status_surat,
+        k.siswa_nis,
+        s.nama_siswa
+      FROM absensi a
+      JOIN krs k ON a.krs_id = k.krs_id
+      JOIN siswa s ON k.siswa_nis = s.nis
+      JOIN siswa_ortu so ON s.nis = so.nis
+      JOIN ortu o ON so.nik = o.nik
+      WHERE a.absensi_id = ? AND o.user_id = ?
+    `, [absensi_id, userId]);
+
+    if (detailRows.length === 0) {
+      return res.status(403).json({ message: 'Data surat izin tidak ditemukan atau bukan milik Anda.' });
+    }
+
+    const surat = detailRows[0];
+
+    res.status(200).json({
+      message: 'Detail surat izin berhasil diambil',
+      data: {
+        absensi_id: surat.absensi_id,
+        nama_siswa: surat.nama_siswa,
+        tanggal: surat.tanggal,
+        jenis: surat.keterangan === 's' ? 'Sakit' : 'Izin',
+        uraian: surat.uraian,
+        status: surat.status_surat === 'terima' ? 'Disetujui' :
+                surat.status_surat === 'tolak' ? 'Ditolak' :
+                'Diproses',
+        surat_url: surat.surat ? `/Upload/surat/${surat.surat}` : null
+      }
+    });
+
+  } catch (error) {
+    console.error('Gagal mengambil detail surat izin:', error);
+    res.status(500).json({ message: 'Terjadi kesalahan saat mengambil detail surat izin', error: error.message });
+  }
+};
+
 // controller/dashboardController.js
 const submitSuratIzin = async (req, res) => {
   const userId = req.user.userId; // ID orang tua dari JWT
@@ -676,4 +780,69 @@ const getRiwayatAbsensiSiswa = async (req, res) => {
   }
 };
 
-module.exports = {getBiodataOrtu, getSiswaByOrtu, getBerita, editBiodataOrtu, getDashboardCountOrtu, getJadwalSiswaOrtu, getJadwalSiswaOrtuByHari, submitSuratIzin, getRiwayatAbsensiSiswa};
+const getStatistikNilaiSiswa = async (req, res) => {
+  const userId = req.user.userId;
+  const { nis } = req.params;
+  const kelasFilter = req.query.kelas; // optional filter by kelas
+
+  console.log('🔎 Endpoint Statistik Dipanggil');
+  console.log('User ID:', userId, 'NIS:', nis);
+  
+  try {
+    // 1. Validasi siswa milik ortu
+    const [[checkAnak]] = await db.query(
+      `SELECT s.nama_siswa FROM siswa_ortu so
+       JOIN siswa s ON so.nis = s.nis
+       JOIN ortu o ON so.nik = o.nik
+       WHERE o.user_id = ? AND s.nis = ?`,
+      [userId, nis]
+    );
+
+    if (!checkAnak) {
+      return res.status(403).json({ message: 'Anda tidak memiliki akses ke siswa ini' });
+    }
+
+    // 2. Ambil data statistik nilai
+    const [statistikResult] = await db.query(`CALL sp_read_statistik_nilai(?)`, [nis]);
+    const nilaiStatistik = statistikResult[0] || [];
+
+    // 3. Ambil daftar kelas yang pernah diikuti siswa
+    const [kelasResult] = await db.query(`
+      SELECT DISTINCT k.nama_kelas
+      FROM krs kr
+      JOIN kelas k ON kr.kelas_id = k.kelas_id
+      WHERE kr.siswa_nis = ?
+    `, [nis]);
+
+    const kelasTersedia = kelasResult.map(k => k.nama_kelas);
+
+    // 4. Filter nilai berdasarkan kelas (jika query ?kelas= disediakan)
+    const dataFiltered = kelasFilter
+      ? nilaiStatistik.filter(n => n.nama_kelas === kelasFilter)
+      : nilaiStatistik;
+
+    // 5. Format hasil untuk frontend
+    const formattedData = dataFiltered.map(n => ({
+      kelas: n.nama_kelas,
+      mapel: n.nama_mapel,
+      rerata: n.rerata
+    }));
+
+    res.status(200).json({
+      siswa: checkAnak.nama_siswa,
+      kelas_tersedia: kelasTersedia,
+      data: formattedData
+    });
+
+  } catch (error) {
+    console.error('Error statistik nilai:', error);
+    res.status(500).json({ 
+      message: 'Terjadi kesalahan saat mengambil data nilai', 
+      error: error.message 
+    });
+  }
+};
+
+
+
+module.exports = {getBiodataOrtu, getSiswaByOrtu, getBerita, editBiodataOrtu, getDashboardCountOrtu, getJadwalSiswaOrtu, getJadwalSiswaOrtuByHari, submitSuratIzin, getRiwayatAbsensiSiswa, getStatistikNilaiSiswa, getRiwayatSuratIzin, getDetailSuratIzin};
