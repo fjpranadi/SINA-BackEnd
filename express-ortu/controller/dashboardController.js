@@ -783,20 +783,16 @@ const getRiwayatAbsensiSiswa = async (req, res) => {
 const getStatistikNilaiSiswa = async (req, res) => {
   const userId = req.user.userId;
   const { nis } = req.params;
-  const kelasFilter = req.query.kelas; // optional filter by kelas
+  const filterKelas = req.query.kelas; // e.g. ?kelas=VII/2
 
-  console.log('🔎 Endpoint Statistik Dipanggil');
-  console.log('User ID:', userId, 'NIS:', nis);
-  
   try {
-    // 1. Validasi siswa milik ortu
-    const [[checkAnak]] = await db.query(
-      `SELECT s.nama_siswa FROM siswa_ortu so
-       JOIN siswa s ON so.nis = s.nis
-       JOIN ortu o ON so.nik = o.nik
-       WHERE o.user_id = ? AND s.nis = ?`,
-      [userId, nis]
-    );
+    // 1. Validasi apakah siswa ini milik ortu
+    const [[checkAnak]] = await db.query(`
+      SELECT s.nama_siswa FROM siswa_ortu so
+      JOIN siswa s ON so.nis = s.nis
+      JOIN ortu o ON so.nik = o.nik
+      WHERE o.user_id = ? AND s.nis = ?
+    `, [userId, nis]);
 
     if (!checkAnak) {
       return res.status(403).json({ message: 'Anda tidak memiliki akses ke siswa ini' });
@@ -804,44 +800,40 @@ const getStatistikNilaiSiswa = async (req, res) => {
 
     // 2. Ambil data statistik nilai
     const [statistikResult] = await db.query(`CALL sp_read_statistik_nilai(?)`, [nis]);
-    const nilaiStatistik = statistikResult[0] || [];
+    const dataNilai = statistikResult[0] || [];
 
-    // 3. Ambil daftar kelas yang pernah diikuti siswa
-    const [kelasResult] = await db.query(`
-      SELECT DISTINCT k.nama_kelas
-      FROM krs kr
-      JOIN kelas k ON kr.kelas_id = k.kelas_id
-      WHERE kr.siswa_nis = ?
-    `, [nis]);
+    // 3. Siapkan daftar kelas (format: tingkat/semester)
+    const kelasTersedia = [
+      ...new Set(dataNilai.map(d => `${d.tingkat}/${d.semester}`))
+    ];
 
-    const kelasTersedia = kelasResult.map(k => k.nama_kelas);
+    // 4. Filter jika ada query ?kelas=
+    const filtered = filterKelas
+      ? dataNilai.filter(d => `${d.tingkat}/${d.semester}` === filterKelas)
+      : dataNilai;
 
-    // 4. Filter nilai berdasarkan kelas (jika query ?kelas= disediakan)
-    const dataFiltered = kelasFilter
-      ? nilaiStatistik.filter(n => n.nama_kelas === kelasFilter)
-      : nilaiStatistik;
-
-    // 5. Format hasil untuk frontend
-    const formattedData = dataFiltered.map(n => ({
-      kelas: n.nama_kelas,
-      mapel: n.nama_mapel,
-      rerata: n.rerata
+    // 5. Format hasil
+    const formatted = filtered.map(d => ({
+      kelas: `${d.tingkat}/${d.semester}`,
+      mapel: d.nama_mapel,
+      nilai: d.nilai
     }));
 
-    res.status(200).json({
+    return res.status(200).json({
       siswa: checkAnak.nama_siswa,
       kelas_tersedia: kelasTersedia,
-      data: formattedData
+      data: formatted
     });
 
   } catch (error) {
     console.error('Error statistik nilai:', error);
-    res.status(500).json({ 
-      message: 'Terjadi kesalahan saat mengambil data nilai', 
-      error: error.message 
+    return res.status(500).json({
+      message: 'Terjadi kesalahan saat mengambil data nilai',
+      error: error.message
     });
   }
 };
+
 
 const getListRaporSiswa = async (req, res) => {
   const userId = req.user.userId;
