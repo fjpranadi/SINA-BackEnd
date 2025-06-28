@@ -209,6 +209,55 @@ const editBiodataOrtu = async (req, res) => {
   }
 };
 
+const ubahPasswordOrtu = async (req, res) => {
+  const userId = req.user.userId;
+  const { password_lama, password_baru, konfirmasi_password } = req.body;
+
+  try {
+    // Validasi: Semua field wajib diisi
+    if (!password_lama || !password_baru || !konfirmasi_password) {
+      return res.status(400).json({ message: 'Semua kolom password harus diisi' });
+    }
+
+    // Validasi: Password baru dan konfirmasi harus sama
+    if (password_baru !== konfirmasi_password) {
+      return res.status(400).json({ message: 'Konfirmasi password tidak cocok' });
+    }
+
+    // Ambil password lama dari database
+    const [pwResult] = await db.query('CALL sp_read_password(?)', [userId]);
+    const user = pwResult[0]?.[0]; // akses objek pertama dari result set
+
+    if (!user) {
+      return res.status(404).json({ message: 'Data pengguna tidak ditemukan' });
+    }
+
+    const passwordAsli = user.password;
+
+    if (!passwordAsli) {
+      return res.status(404).json({ message: 'Data pengguna tidak ditemukan' });
+    }
+
+    // Cek apakah password lama cocok
+    const cocok = await bcrypt.compare(password_lama, passwordAsli);
+    if (!cocok) {
+      return res.status(403).json({ message: 'Password lama tidak sesuai' });
+    }
+
+    // Hash password baru
+    const hashBaru = await bcrypt.hash(password_baru, 10);
+
+    // Update password ke database
+    await db.query('CALL sp_update_user(?, NULL, NULL, ?)', [userId, hashBaru]);
+
+    return res.status(200).json({ message: 'Password berhasil diperbarui' });
+  } catch (err) {
+    console.error('Gagal mengubah password:', err);
+    return res.status(500).json({ message: 'Terjadi kesalahan saat mengubah password', error: err.message });
+  }
+};
+
+
 // Tampilkan semua surat izin yang diajukan ortu untuk siswa
 const getRiwayatSuratIzin = async (req, res) => {
   const userId = req.user.userId;
@@ -960,4 +1009,6 @@ module.exports = {
   getRiwayatSuratIzin, 
   getDetailSuratIzin, 
   getListRaporSiswa, 
-  getDetailRaporSiswa};
+  getDetailRaporSiswa,
+  ubahPasswordOrtu
+};

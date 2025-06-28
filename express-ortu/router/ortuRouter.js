@@ -15,7 +15,8 @@ const {
   getRiwayatSuratIzin,
   getDetailSuratIzin,
   getListRaporSiswa,
-  getDetailRaporSiswa
+  getDetailRaporSiswa,
+  ubahPasswordOrtu
 } = require('../controller/dashboardController');
 
 const uploadSurat = require('../middleware/uploadSurat');
@@ -26,6 +27,7 @@ router.get('/dashboard/biodata', verifyToken, getBiodataOrtu);
 router.get('/dashboard/siswa', verifyToken, getSiswaByOrtu);
 router.get('/dashboard/berita', verifyToken, getBerita);
 router.put('/dashboard/biodata', verifyToken, uploadprofile.single('foto_profil'), editBiodataOrtu);
+router.put('/dashboard/ortu/password', verifyToken, ubahPasswordOrtu);
 router.post('/dashboard/ajukan-surat', verifyToken, uploadSurat.single('surat'), submitSuratIzin);
 router.get('/dashboard/:nis', verifyToken, getDashboardCountOrtu);
 router.get('/dashboard/jadwal/:nis', verifyToken, getJadwalSiswaOrtu);
