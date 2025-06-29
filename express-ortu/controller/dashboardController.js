@@ -734,100 +734,110 @@ const getJadwalSiswaOrtuByHari = async (req, res) => {
 };
 
 const getRiwayatAbsensiSiswa = async (req, res) => {
-  const userId = req.user.userId; // ID orang tua dari JWT
-  const { nis } = req.params; // NIS siswa yang ingin dilihat
+  const userId = req.user.userId;
+  const { nis } = req.params;
 
   try {
-    // 1. Verifikasi bahwa siswa tersebut adalah anak dari orang tua yang login
-    const [ortuData] = await db.query(
-      `SELECT o.nik 
-       FROM ortu o
-       JOIN siswa_ortu so ON o.nik = so.nik
-       WHERE o.user_id = ? AND so.nis = ?`,
-      [userId, nis]
-    );
+    // 1. Verifikasi ortu dan siswa
+    const [[ortuResult]] = await db.query('CALL ortu_profile(?)', [userId]);
+    const ortu = ortuResult[0];
 
-    if (ortuData.length === 0) {
-      return res.status(403).json({ 
-        message: 'Anda tidak memiliki akses ke siswa ini atau data tidak ditemukan' 
-      });
+    if (!ortu || !ortu.nik) {
+      return res.status(403).json({ message: 'Data ortu tidak ditemukan' });
     }
 
-    // 2. Ambil riwayat absensi siswa
-    const [absensiResult] = await db.query(`
-      SELECT 
-        a.absensi_id,
-        a.tanggal,
-        CASE 
-          WHEN a.keterangan = 'h' THEN 'Hadir'
-          WHEN a.keterangan = 'i' THEN 'Izin'
-          WHEN a.keterangan = 's' THEN 'Sakit'
-          WHEN a.keterangan = 'a' THEN 'Alpha'
-        END AS status_kehadiran,
-        a.uraian,
-        a.surat,
-        a.status_surat,
-        m.nama_mapel,
-        j.hari,
-        mj.start,
-        mj.finish,
-        g.nama_guru,
-        k.nama_kelas
-      FROM absensi a
-      JOIN jadwal j ON a.jadwal_id = j.jadwal_id
-      JOIN master_jadwal mj ON j.master_jadwal_id = mj.master_jadwal_id
-      JOIN mapel m ON j.mapel_id = m.mapel_id
-      LEFT JOIN guru g ON a.guru_nip = g.nip
-      JOIN krs krs ON a.krs_id = krs.krs_id
-      JOIN kelas k ON krs.kelas_id = k.kelas_id
-      WHERE krs.siswa_nis = ?
-        AND a.keterangan IN ('a', 'i', 's')
-      ORDER BY a.tanggal DESC
-    `, [nis]);
+    const [anakList] = await db.query('CALL sp_read_siswa_ortu_by_nik(?)', [ortu.nik]);
+    const anak = anakList[0].find(a => a.nis === nis);
 
-    // 3. Ambil nama siswa untuk response
-    const [[siswa]] = await db.query(
-      `SELECT nama_siswa FROM siswa WHERE nis = ?`,
-      [nis]
-    );
-
-    if (!siswa) {
-      return res.status(404).json({ 
-        message: 'Data siswa tidak ditemukan' 
-      });
+    if (!anak) {
+      return res.status(403).json({ message: 'Siswa tidak ditemukan atau tidak terkait ortu ini' });
     }
 
-    // 4. Format response
-    const formattedResult = absensiResult.map(absensi => ({
-      id: absensi.absensi_id,
-      tanggal: absensi.tanggal,
-      status: absensi.status_kehadiran,
-      mata_pelajaran: absensi.nama_mapel,
-      kelas: absensi.nama_kelas,
-      jam: `${absensi.start} - ${absensi.finish}`,
-      hari: absensi.hari,
-      guru: absensi.nama_guru || 'Tidak tercatat',
-      alasan: absensi.uraian || 'Tidak ada keterangan',
-      surat: absensi.surat ? `/uploads/surat/${absensi.surat}` : null,
-      status_surat: absensi.status_surat === 'terima' ? 'Diterima' : 
-                   absensi.status_surat === 'tolak' ? 'Ditolak' : 'Menunggu'
+    // 2. Ambil krs_id terbaru (asumsi 1 aktif)
+    const [krsRows] = await db.query('CALL sp_get_siswa_current_krs(?)', [nis]);
+    const krs_id = krsRows[0]?.[0]?.krs_id;
+
+    if (!krs_id) {
+      return res.status(404).json({ message: 'Data KRS siswa tidak ditemukan' });
+    }
+
+    // 3. Ambil riwayat absensi via SP
+    const [riwayatRows] = await db.query('CALL sp_read_riwayat_absen_siswa(?)', [krs_id]);
+    const riwayat = riwayatRows[0] || [];
+
+    // 4. Format hasil
+    const hasil = riwayat.map(item => ({
+      tanggal: item.tanggal,
+      status: item.keterangan === 's' ? 'Sakit'
+             : item.keterangan === 'i' ? 'Izin'
+             : item.keterangan === 'a' ? 'Alpha'
+             : 'Tidak Diketahui',
+      surat: item.surat ? `/uploads/surat/${item.surat}` : null
     }));
 
-    res.status(200).json({
-      message: `Riwayat absensi siswa ${siswa.nama_siswa} berhasil diambil`,
-      status: 200,
-      data: formattedResult
+    return res.status(200).json({
+      message: `Riwayat absensi siswa ${anak.nama_siswa} berhasil diambil`,
+      data: hasil
     });
 
   } catch (err) {
-    console.error('Error detail:', err);
-    res.status(500).json({ 
-      message: 'Gagal mengambil riwayat absensi siswa',
-      error: err.message,
-      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    console.error('Gagal mengambil riwayat absensi siswa:', err);
+    res.status(500).json({
+      message: 'Terjadi kesalahan saat mengambil riwayat absensi siswa',
+      error: err.message
     });
   }
 };
+
+
+const getRekapAbsensiBySemester = async (req, res) => {
+  const userId = req.user.userId;
+  const { nis, krs_id } = req.params;
+
+  try {
+    // Validasi ortu
+    const [ortuResult] = await db.query('CALL ortu_profile(?)', [userId]);
+    const ortu = ortuResult[0]?.[0];
+    if (!ortu || !ortu.nik) {
+      return res.status(403).json({ message: 'Data ortu tidak ditemukan' });
+    }
+
+    // Validasi siswa milik ortu
+    const [anakList] = await db.query('CALL sp_read_siswa_ortu_by_nik(?)', [ortu.nik]);
+    const anak = anakList[0].find(a => a.nis === nis);
+    if (!anak) {
+      return res.status(403).json({ message: 'Siswa tidak ditemukan atau tidak terkait ortu ini' });
+    }
+
+    // Ambil rekap absen
+    const [rekapRows] = await db.query('CALL sp_rekap_absen_siswa(?)', [krs_id]);
+    const rekap = rekapRows[0]?.[0] || {};
+    console.log(rekap);
+
+    return res.status(200).json({
+      message: 'Rekap absensi berhasil diambil',
+      data: {
+        nama: anak.nama_siswa,
+        nis,
+        krs_id,
+        absensi: {
+          hadir: rekap.hadir || 0,
+          izin: rekap.izin || 0,
+          sakit: rekap.sakit || 0,
+          alpha: rekap.alpha || 0
+        }
+      }
+    });
+
+  } catch (err) {
+    console.error('Gagal mengambil rekap absensi:', err);
+    return res.status(500).json({
+      message: 'Gagal mengambil rekap absensi',
+      error: err.message
+    });
+  }
+};
+
 
 const getStatistikNilaiSiswa = async (req, res) => {
   const userId = req.user.userId;
@@ -1010,5 +1020,6 @@ module.exports = {
   getDetailSuratIzin, 
   getListRaporSiswa, 
   getDetailRaporSiswa,
-  ubahPasswordOrtu
+  ubahPasswordOrtu,
+  getRekapAbsensiBySemester
 };

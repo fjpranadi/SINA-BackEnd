@@ -16,7 +16,8 @@ const {
   getDetailSuratIzin,
   getListRaporSiswa,
   getDetailRaporSiswa,
-  ubahPasswordOrtu
+  ubahPasswordOrtu,
+  getRekapAbsensiBySemester
 } = require('../controller/dashboardController');
 
 const uploadSurat = require('../middleware/uploadSurat');
@@ -33,6 +34,7 @@ router.get('/dashboard/:nis', verifyToken, getDashboardCountOrtu);
 router.get('/dashboard/jadwal/:nis', verifyToken, getJadwalSiswaOrtu);
 router.get('/dashboard/jadwal/:nis/:hari', verifyToken, getJadwalSiswaOrtuByHari);
 router.get('/dashboard/riwayat-absensi/:nis', verifyToken, getRiwayatAbsensiSiswa);
+router.get('/dashboard/absensi/rekap/:nis/:krs_id', verifyToken, getRekapAbsensiBySemester);
 router.get('/dashboard/statistik/:nis', verifyToken, getStatistikNilaiSiswa);
 router.get('/dashboard/surat-izin/:nis', verifyToken, getRiwayatSuratIzin);
 router.get('/dashboard/surat-izin/detail/:absensi_id', verifyToken, getDetailSuratIzin);
