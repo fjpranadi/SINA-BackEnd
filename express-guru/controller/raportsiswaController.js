@@ -57,15 +57,16 @@ const getSiswaByKelasAndMapel = async (req, res) => {
     if (!guru) return res.status(404).json({ message: 'Guru tidak ditemukan' });
 
     const [rows] = await db.query(`
-      SELECT 
+    SELECT 
         s.nis,
         s.nama_siswa,
         kd.krs_id,
-        kd.nilai
-      FROM krs_detail kd
-      JOIN krs k ON kd.krs_id = k.krs_id
-      JOIN siswa s ON k.siswa_nis = s.nis
-      WHERE kd.mapel_id = ? AND kd.guru_nip = ? AND k.kelas_id = ?
+        kd.nilai AS nilai_pengetahuan,
+        kd.keterampilan AS nilai_keterampilan
+    FROM krs_detail kd
+    JOIN krs k ON kd.krs_id = k.krs_id
+    JOIN siswa s ON k.siswa_nis = s.nis
+    WHERE kd.mapel_id = ? AND kd.guru_nip = ? AND k.kelas_id = ?
     `, [mapel_id, guru.nip, kelas_id]);
 
     res.json({ success: true, data: rows });
@@ -78,15 +79,15 @@ const getSiswaByKelasAndMapel = async (req, res) => {
 // Input nilai rapor oleh guru
 const inputNilaiRaporGuru = async (req, res) => {
   const userId = req.user.userId;
-  const { krs_id, status } = req.params;
-  const { mapel_id, nilai } = req.body;
+  const { krs_id } = req.params;
+  const { mapel_id, nilai_pengetahuan, nilai_keterampilan } = req.body;
 
   try {
     const [[guru]] = await db.query('SELECT nip FROM guru WHERE user_id = ?', [userId]);
     if (!guru) return res.status(404).json({ message: 'Guru tidak ditemukan' });
 
     const [[cek]] = await db.query(`
-      SELECT nilai FROM krs_detail
+      SELECT nilai, keterampilan FROM krs_detail
       WHERE krs_id = ? AND mapel_id = ? AND guru_nip = ?
     `, [krs_id, mapel_id, guru.nip]);
 
@@ -94,9 +95,9 @@ const inputNilaiRaporGuru = async (req, res) => {
 
     await db.query(`
       UPDATE krs_detail
-      SET nilai = ?
+      SET nilai = ?, keterampilan = ?
       WHERE krs_id = ? AND mapel_id = ? AND guru_nip = ?
-    `, [nilai, krs_id, mapel_id, guru.nip]);
+    `, [nilai_pengetahuan, nilai_keterampilan, krs_id, mapel_id, guru.nip]);
 
     return res.status(200).json({
       success: true,
@@ -104,13 +105,15 @@ const inputNilaiRaporGuru = async (req, res) => {
     });
 
   } catch (err) {
-    console.error(' ERROR:', err);
+    console.error('ERROR:', err);
     return res.status(500).json({
       message: 'Gagal menyimpan nilai rapor',
       error: err.message
     });
   }
 };
+
+
 const getStatistikNilaiBySiswaAndTahun = async (req, res) => {
   const { krs_id } = req.params;
   const { tahun_akademik_id } = req.query;
@@ -124,17 +127,18 @@ const getStatistikNilaiBySiswaAndTahun = async (req, res) => {
 
   try {
     const [rows] = await db.query(`
-      SELECT 
+    SELECT 
         m.nama_mapel,
-        kd.nilai,
+        kd.nilai AS nilai_pengetahuan,
+        kd.keterampilan AS nilai_keterampilan,
         DATE_FORMAT(ta.tahun_mulai, '%Y-%m-%d') AS tahun_mulai,
         kl.tingkat AS tingkat
-      FROM krs_detail kd
-      JOIN krs k ON kd.krs_id = k.krs_id
-      JOIN mapel m ON kd.mapel_id = m.mapel_id
-      JOIN kelas kl ON k.kelas_id = kl.kelas_id
-      JOIN tahun_akademik ta ON kl.tahun_akademik_id = ta.tahun_akademik_id
-      WHERE k.krs_id = ? AND ta.tahun_akademik_id LIKE CONCAT(?, '%')
+    FROM krs_detail kd
+    JOIN krs k ON kd.krs_id = k.krs_id
+    JOIN mapel m ON kd.mapel_id = m.mapel_id
+    JOIN kelas kl ON k.kelas_id = kl.kelas_id
+    JOIN tahun_akademik ta ON kl.tahun_akademik_id = ta.tahun_akademik_id
+    WHERE k.krs_id = ? AND ta.tahun_akademik_id LIKE CONCAT(?, '%')
     `, [krs_id, tahun_akademik_id]);
 
     res.status(200).json({
