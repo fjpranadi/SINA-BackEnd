@@ -25,6 +25,7 @@ createBeritaGuru,
 getSiswaPengumpulanTugas,
 beriNilaiTugasSiswa,
 getAbsensiByJadwal,
+getRingkasanDashboardGuru,
 getSuratIzinSakit,
 setujuiSuratIzin,
 tolakSuratIzin 
@@ -66,6 +67,8 @@ router.get('/dashboard/mapel/:mapel_id/tugas/:tugas_id/siswa/:krs_id/', verifyTo
 
 router.get('/dashboard/absensi/:jadwal_id', verifyToken, getAbsensiByJadwal);
 router.post('/dashboard/absensi/:jadwal_id', verifyToken, createAbsensiSiswa);
+router.get('/dashboard/ringkasan', verifyToken, getRingkasanDashboardGuru);
+
 
 router.get('/dashboard/berita', verifyToken, getBerita);
 router.get('/dashboard/berita/:id', verifyToken, getBeritaById);

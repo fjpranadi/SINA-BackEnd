@@ -1278,6 +1278,150 @@ const createAbsensiSiswa = async (req, res) => {
   }
 };
 
+const getRingkasanDashboardGuru = async (req, res) => {
+  const userId = req.user.userId;
+
+  try {
+    // Ambil NIP guru
+    const [[guru]] = await db.query(`
+      SELECT nip FROM db_cina.guru WHERE user_id = ?
+    `, [userId]);
+    if (!guru) return res.status(404).json({ success: false, message: 'Guru tidak ditemukan' });
+
+    const guruNip = guru.nip;
+    const currentTime = new Date().toTimeString().slice(0, 8); // HH:MM:SS
+
+    // Cek jadwal mengajar berdasarkan waktu dan kelas yang diasuh
+    const [mengajar] = await db.query(`
+      SELECT m.nama_mapel, k.kelas_id, k.nama_kelas
+      FROM db_cina.jadwal j
+      JOIN db_cina.master_jadwal mj ON j.master_jadwal_id = mj.master_jadwal_id
+      JOIN db_cina.mapel m ON j.mapel_id = m.mapel_id
+      JOIN db_cina.kelas k ON j.kelas_id = k.kelas_id
+      WHERE k.guru_nip = ?
+        AND LOWER(j.hari) = LOWER(DAYNAME(CURDATE()))
+        AND TIME(mj.start) <= ?
+        AND TIME(mj.finish) >= ?
+      LIMIT 1
+    `, [guruNip, currentTime, currentTime]);
+
+    // Ambil kelas yang dibina sebagai wali kelas
+    const [[wali]] = await db.query(`
+      SELECT kelas_id, nama_kelas FROM db_cina.kelas WHERE guru_nip = ?
+    `, [guruNip]);
+
+    // Tugas belum dikerjakan (semua kelas guru)
+    const [[tugasBelum]] = await db.query(`
+      SELECT COUNT(*) AS total 
+      FROM db_cina.krs_detail_materi d
+      JOIN db_cina.materi m ON d.materi_id = m.materi_id
+      JOIN db_cina.krs k ON d.krs_id = k.krs_id
+      JOIN db_cina.kelas kl ON k.kelas_id = kl.kelas_id
+      WHERE kl.guru_nip = ? AND d.tanggal_pengumpulan IS NULL
+    `, [guruNip]);
+
+    // Tugas terlambat
+    const [[tugasTerlambat]] = await db.query(`
+      SELECT COUNT(*) AS total 
+      FROM db_cina.krs_detail_materi d
+      JOIN db_cina.materi m ON d.materi_id = m.materi_id
+      JOIN db_cina.krs k ON d.krs_id = k.krs_id
+      JOIN db_cina.kelas kl ON k.kelas_id = kl.kelas_id
+      WHERE kl.guru_nip = ? AND d.tanggal_pengumpulan IS NULL AND m.tanggal < CURDATE()
+    `, [guruNip]);
+
+    // Materi hari ini oleh guru
+    const [[materiHariIni]] = await db.query(`
+      SELECT COUNT(*) AS total
+      FROM db_cina.materi m
+      JOIN db_cina.kelas k ON m.kelas_id = k.kelas_id
+      WHERE k.guru_nip = ? AND DATE(m.tanggal) = CURDATE()
+    `, [guruNip]);
+
+    // Absensi siswa tidak hadir
+    const [[absensiTidakHadir]] = await db.query(`
+      SELECT COUNT(*) AS total
+      FROM db_cina.absensi a
+      WHERE a.guru_nip = ?
+        AND DATE(a.tanggal) = CURDATE()
+        AND a.keterangan IN ('i', 's', 'a')
+    `, [guruNip]);
+
+    // Inisialisasi data wali kelas
+    let waliData = {
+      kelas: wali ? wali.nama_kelas : null,
+      tugas_belum_dikerjakan: 0,
+      absensi_tidak_hadir: 0,
+      tugas_terlambat: 0,
+      materi_hari_ini: 0
+    };
+
+    if (wali) {
+      const kelasId = wali.kelas_id;
+
+      // Tugas belum dikerjakan di kelas wali
+      const [[waliTugasBelum]] = await db.query(`
+        SELECT COUNT(*) AS total 
+        FROM db_cina.krs_detail_materi d
+        JOIN db_cina.krs k ON d.krs_id = k.krs_id
+        WHERE k.kelas_id = ? AND d.tanggal_pengumpulan IS NULL
+      `, [kelasId]);
+
+      // Tugas terlambat
+      const [[waliTugasTerlambat]] = await db.query(`
+        SELECT COUNT(*) AS total 
+        FROM db_cina.krs_detail_materi d
+        JOIN db_cina.krs k ON d.krs_id = k.krs_id
+        JOIN db_cina.materi m ON d.materi_id = m.materi_id
+        WHERE k.kelas_id = ? AND d.tanggal_pengumpulan IS NULL AND m.tanggal < CURDATE()
+      `, [kelasId]);
+
+      // Absensi tidak hadir
+      const [[waliAbsensi]] = await db.query(`
+        SELECT COUNT(*) AS total
+        FROM db_cina.absensi a
+        JOIN db_cina.krs k ON a.krs_id = k.krs_id
+        WHERE k.kelas_id = ? AND DATE(a.tanggal) = CURDATE()
+        AND a.keterangan IN ('i', 's', 'a')
+      `, [kelasId]);
+
+      // Materi untuk kelas wali hari ini
+      const [[waliMateriHariIni]] = await db.query(`
+        SELECT COUNT(*) AS total
+        FROM db_cina.materi
+        WHERE kelas_id = ? AND DATE(tanggal) = CURDATE()
+      `, [kelasId]);
+
+      waliData = {
+        kelas: wali.nama_kelas,
+        tugas_belum_dikerjakan: waliTugasBelum.total,
+        tugas_terlambat: waliTugasTerlambat.total,
+        absensi_tidak_hadir: waliAbsensi.total,
+        materi_hari_ini: waliMateriHariIni.total
+      };
+    }
+
+    res.status(200).json({
+      success: true,
+      mengajar: {
+        mapel: mengajar.length ? mengajar[0].nama_mapel : null,
+        kelas: mengajar.length ? mengajar[0].nama_kelas : null,
+        tugas_belum_dikerjakan: tugasBelum.total,
+        absensi_tidak_hadir: absensiTidakHadir.total,
+        tugas_terlambat: tugasTerlambat.total,
+        materi_hari_ini: materiHariIni.total
+      },
+      wali_kelas: waliData
+    });
+
+  } catch (err) {
+    console.error('Error getRingkasanDashboardGuru:', err);
+    res.status(500).json({ success: false, message: 'Terjadi kesalahan', error: err.message });
+  }
+};
+
+
+
 
 const getBerita = async (req, res) => {
   try {
@@ -2099,6 +2243,7 @@ module.exports = {
   getMateriDetailById,
   createAbsensiSiswa,
   getAbsensiByJadwal,
+  getRingkasanDashboardGuru,
   getBerita,
   getBeritaById,
 createBeritaGuru,
