@@ -1,12 +1,40 @@
 const db = require('../database/db');
 
-// GET semua mapel
+// GET semua kurikulum dengan tingkat dari kurikulum_detail
 const getAllkurikulum = async (req, res) => {
     try {
-        const [rows] = await db.query('SELECT * FROM kurikulum');
-        res.status(200).json(rows);
+        // Query untuk mendapatkan semua kurikulum
+        const [kurikulumRows] = await db.query('SELECT * FROM kurikulum');
+        
+        // Jika tidak ada data kurikulum
+        if (kurikulumRows.length === 0) {
+            return res.status(200).json([]);
+        }
+
+        // Untuk setiap kurikulum, dapatkan tingkat dari kurikulum_detail
+        const kurikulumWithTingkat = await Promise.all(
+            kurikulumRows.map(async (kurikulum) => {
+                // Ambil satu contoh tingkat dari kurikulum_detail untuk kurikulum ini
+                const [detailRows] = await db.query(
+                    'SELECT DISTINCT tingkat FROM kurikulum_detail WHERE kurikulum_id = ? LIMIT 1',
+                    [kurikulum.kurikulum_id]
+                );
+
+                // Tambahkan properti tingkat ke objek kurikulum
+                return {
+                    ...kurikulum,
+                    tingkat: detailRows.length > 0 ? detailRows[0].tingkat : null
+                };
+            })
+        );
+
+        res.status(200).json(kurikulumWithTingkat);
     } catch (error) {
-        res.status(500).json({ message: 'Gagal mengambil data kurikulum', error });
+        console.error('Error fetching kurikulum:', error);
+        res.status(500).json({ 
+            message: 'Gagal mengambil data kurikulum', 
+            error: error.message 
+        });
     }
 };
 

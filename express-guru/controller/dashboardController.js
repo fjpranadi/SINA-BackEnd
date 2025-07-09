@@ -11,7 +11,7 @@ const getdashboard = async (req, res) => {
     // Get userId from JWT token
     const userId = req.user.userId;
 
-    // Ambil NIP guru berdasarkan userId
+    // Get teacher data including NIP
     const [teacher] = await db.query(
       `SELECT nip FROM guru WHERE user_id = ?`,
       [userId]
@@ -26,54 +26,143 @@ const getdashboard = async (req, res) => {
 
     const guru_nip = teacher[0].nip;
 
-    // 1. Hitung tugas yang belum dikumpulkan oleh siswa
-    const [uncompletedTasks] = await db.query(`
-      SELECT COUNT(DISTINCT t.tugas_id) as count
-      FROM tugas t
-      JOIN krs_detail_materi kdm ON t.tugas_id = kdm.tugas_id
-      JOIN krs_detail kd ON kdm.krs_id = kd.krs_id
-      WHERE kd.guru_nip = ? 
-      AND kdm.tanggal_pengumpulan IS NULL
-      AND t.tenggat_kumpul >= NOW()
-    `, [guru_nip]);
-
-    // 2. Hitung siswa yang absen hari ini
-    const [absentStudents] = await db.query(`
-      SELECT COUNT(DISTINCT a.krs_id) as count
-      FROM absensi a
-      JOIN krs_detail kd ON a.krs_id = kd.krs_id
-      WHERE a.guru_nip = ?
-      AND a.keterangan = 'a'
-      AND DATE(a.tanggal) = DATE(NOW())
-    `, [guru_nip]);
-
-    // 3. Hitung keterlambatan pengumpulan tugas
-    const [lateSubmissions] = await db.query(`
-      SELECT COUNT(DISTINCT kdm.krs_id) as count
-      FROM krs_detail_materi kdm
-      JOIN tugas t ON kdm.tugas_id = t.tugas_id
-      JOIN krs_detail kd ON kdm.krs_id = kd.krs_id
+    // Get all classes and subjects taught by this teacher
+    const [teachingData] = await db.query(`
+      SELECT DISTINCT
+        j.hari,
+        k.nama_kelas,
+        m.mapel_id,
+        m.nama_mapel
+      FROM jadwal j
+      JOIN krs_detail kd ON j.mapel_id = kd.mapel_id
+      JOIN mapel m ON j.mapel_id = m.mapel_id
+      JOIN kelas k ON j.kelas_id = k.kelas_id
       WHERE kd.guru_nip = ?
-      AND kdm.tanggal_pengumpulan > t.tenggat_kumpul
+      ORDER BY FIELD(j.hari, 'senin', 'selasa', 'rabu', 'kamis', 'jumat', 'sabtu'), k.nama_kelas
     `, [guru_nip]);
 
-    // 4. Hitung materi yang diposting hari ini
-    const [todayMaterials] = await db.query(`
-      SELECT COUNT(DISTINCT m.materi_id) as count
-      FROM materi m
-      JOIN krs_detail_materi kdm ON m.materi_id = kdm.materi_id
-      JOIN krs_detail kd ON kdm.krs_id = kd.krs_id
-      WHERE kd.guru_nip = ?
-      AND DATE(m.created_at) = DATE(NOW())
-    `, [guru_nip]);
+    if (!teachingData.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'No teaching schedule found for this teacher'
+      });
+    }
 
-    // Siapkan data dashboard
-    const dashboardData = {
-      uncompleted_tasks: uncompletedTasks.count || 0,
-      absent_students: absentStudents.count || 0,
-      late_submissions: lateSubmissions.count || 0,
-      today_materials: todayMaterials.count || 0
-    };
+    // Organize data by day and class
+    const dashboardData = {};
+
+    for (const item of teachingData) {
+      const { hari, nama_kelas, mapel_id, nama_mapel } = item;
+
+      if (!dashboardData[hari]) {
+        dashboardData[hari] = {};
+      }
+
+      if (!dashboardData[hari][nama_kelas]) {
+        dashboardData[hari][nama_kelas] = {};
+      }
+
+      if (!dashboardData[hari][nama_kelas][nama_mapel]) {
+        // Initialize data structure for this subject
+        dashboardData[hari][nama_kelas][nama_mapel] = {
+          uncompleted_tasks: 0,
+          absent_students: 0,
+          late_submissions: 0,
+          today_materials: 0,
+          upcoming_tasks: []
+        };
+
+        // 1. Count uncompleted tasks for this subject and class
+        const [uncompletedTasks] = await db.query(`
+          SELECT COUNT(DISTINCT kdm.tugas_id) as count
+          FROM krs_detail_materi kdm
+          JOIN krs_detail kd ON kdm.krs_id = kd.krs_id AND kdm.mapel_id = kd.mapel_id
+          JOIN tugas t ON kdm.tugas_id = t.tugas_id
+          JOIN krs kr ON kdm.krs_id = kr.krs_id
+          JOIN kelas kl ON kr.kelas_id = kl.kelas_id
+          WHERE kd.guru_nip = ?
+          AND kd.mapel_id = ?
+          AND kl.nama_kelas = ?
+          AND kdm.tanggal_pengumpulan IS NULL
+          AND t.tenggat_kumpul >= CURDATE()
+        `, [guru_nip, mapel_id, nama_kelas]);
+
+        dashboardData[hari][nama_kelas][nama_mapel].uncompleted_tasks = uncompletedTasks[0]?.count || 0;
+
+        // 2. Count absent students for this subject and class today
+        const [absentStudents] = await db.query(`
+          SELECT COUNT(DISTINCT a.krs_id) as count
+          FROM absensi a
+          JOIN krs kr ON a.krs_id = kr.krs_id
+          JOIN kelas kl ON kr.kelas_id = kl.kelas_id
+          JOIN jadwal j ON a.jadwal_id = j.jadwal_id
+          WHERE a.guru_nip = ?
+          AND j.mapel_id = ?
+          AND kl.nama_kelas = ?
+          AND a.keterangan != 'h'
+          AND DATE(a.tanggal) = CURDATE()
+        `, [guru_nip, mapel_id, nama_kelas]);
+
+        dashboardData[hari][nama_kelas][nama_mapel].absent_students = absentStudents[0]?.count || 0;
+
+        // 3. Count late submissions for this subject and class
+        const [lateSubmissions] = await db.query(`
+          SELECT COUNT(DISTINCT kdm.krs_id) as count
+          FROM krs_detail_materi kdm
+          JOIN tugas t ON kdm.tugas_id = t.tugas_id
+          JOIN krs_detail kd ON kdm.krs_id = kd.krs_id AND kdm.mapel_id = kd.mapel_id
+          JOIN krs kr ON kdm.krs_id = kr.krs_id
+          JOIN kelas kl ON kr.kelas_id = kl.kelas_id
+          WHERE kd.guru_nip = ?
+          AND kd.mapel_id = ?
+          AND kl.nama_kelas = ?
+          AND kdm.tanggal_pengumpulan IS NOT NULL
+          AND kdm.tanggal_pengumpulan > t.tenggat_kumpul
+        `, [guru_nip, mapel_id, nama_kelas]);
+
+        dashboardData[hari][nama_kelas][nama_mapel].late_submissions = lateSubmissions[0]?.count || 0;
+
+        // 4. Count materials posted today for this subject and class
+        const [todayMaterials] = await db.query(`
+          SELECT COUNT(DISTINCT m.materi_id) as count
+          FROM materi m
+          JOIN krs_detail_materi kdm ON m.materi_id = kdm.materi_id
+          JOIN krs_detail kd ON kdm.krs_id = kd.krs_id AND kdm.mapel_id = kd.mapel_id
+          JOIN krs kr ON kdm.krs_id = kr.krs_id
+          JOIN kelas kl ON kr.kelas_id = kl.kelas_id
+          WHERE kd.guru_nip = ?
+          AND kd.mapel_id = ?
+          AND kl.nama_kelas = ?
+          AND DATE(m.created_at) = CURDATE()
+        `, [guru_nip, mapel_id, nama_kelas]);
+
+        dashboardData[hari][nama_kelas][nama_mapel].today_materials = todayMaterials[0]?.count || 0;
+
+        // Get upcoming tasks for this subject and class
+        const [upcomingTasks] = await db.query(`
+          SELECT 
+            t.tugas_id,
+            t.judul,
+            t.tenggat_kumpul,
+            m.nama_mapel,
+            k.nama_kelas
+          FROM tugas t
+          JOIN krs_detail_materi kdm ON t.tugas_id = kdm.tugas_id
+          JOIN krs_detail kd ON kdm.krs_id = kd.krs_id AND kdm.mapel_id = kd.mapel_id
+          JOIN mapel m ON kd.mapel_id = m.mapel_id
+          JOIN krs kr ON kd.krs_id = kr.krs_id
+          JOIN kelas k ON kr.kelas_id = k.kelas_id
+          WHERE kd.guru_nip = ?
+          AND kd.mapel_id = ?
+          AND k.nama_kelas = ?
+          AND t.created_at BETWEEN DATE_SUB(CURDATE(), INTERVAL 3 DAY) AND DATE_ADD(CURDATE(), INTERVAL 3 DAY)
+          ORDER BY t.tenggat_kumpul ASC
+          LIMIT 5
+        `, [guru_nip, mapel_id, nama_kelas]);
+
+        dashboardData[hari][nama_kelas][nama_mapel].upcoming_tasks = upcomingTasks;
+      }
+    }
 
     res.status(200).json({
       success: true,
@@ -83,17 +172,20 @@ const getdashboard = async (req, res) => {
     console.error('Error fetching dashboard data:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to fetch dashboard data'
+      message: 'Failed to fetch dashboard data',
+      error: error.message
     });
   }
 };
 
 
-
-
 const getJadwalGuru = async (req, res) => {
   try {
     const userId = req.user.userId;
+    const today = new Date();
+    const todayDate = today.toISOString().split('T')[0]; // Format YYYY-MM-DD
+    const hariIni = today.getDay(); // 0=Minggu, 1=Senin, ..., 6=Sabtu
+    const namaHari = ['minggu', 'senin', 'selasa', 'rabu', 'kamis', 'jumat', 'sabtu'][hariIni];
 
     // Ambil NIP guru berdasarkan userId
     const [teacher] = await db.query(
@@ -112,12 +204,27 @@ const getJadwalGuru = async (req, res) => {
 
     const [jadwalGuru] = await db.query(`
       SELECT 
+        j.jadwal_id,
+        j.mapel_id,
         mj.jam_ke,
         mj.start,
         mj.finish,
-        j.hari,
+        LOWER(j.hari) as hari,
         m.nama_mapel,
-        k.nama_kelas
+        k.nama_kelas,
+        CASE 
+          WHEN EXISTS (
+            SELECT 1 FROM absensi a 
+            WHERE a.jadwal_id = j.jadwal_id 
+            AND a.krs_id IN (
+              SELECT kd.krs_id FROM krs_detail kd 
+              WHERE kd.mapel_id = j.mapel_id 
+              AND kd.guru_nip = ?
+            )
+            AND DATE(a.tanggal) = ?
+          ) THEN 'Sudah Absen'
+          ELSE 'Belum Absen'
+        END AS status_absen
       FROM krs_detail kd
       JOIN krs krs ON kd.krs_id = krs.krs_id
       JOIN jadwal j ON kd.mapel_id = j.mapel_id AND krs.kelas_id = j.kelas_id
@@ -125,23 +232,42 @@ const getJadwalGuru = async (req, res) => {
       JOIN mapel m ON j.mapel_id = m.mapel_id
       JOIN kelas k ON j.kelas_id = k.kelas_id
       WHERE kd.guru_nip = ?
-      GROUP BY mj.jam_ke, mj.start, mj.finish, j.hari, m.nama_mapel, k.nama_kelas
+      GROUP BY j.jadwal_id, j.mapel_id, mj.jam_ke, mj.start, mj.finish, j.hari, m.nama_mapel, k.nama_kelas
       ORDER BY j.hari, mj.jam_ke
-    `, [guru_nip]);
+    `, [guru_nip, todayDate, guru_nip]);
+
+    // Tambahkan pengecekan hari
+    const result = jadwalGuru.map(jadwal => {
+      const isToday = jadwal.hari === namaHari;
+      return {
+        ...jadwal,
+        is_today: isToday,
+        status_absen: isToday ? jadwal.status_absen : 'Bukan Hari Ini'
+      };
+    });
 
     res.status(200).json({
       success: true,
-      data: jadwalGuru
+      data: result,
+      info: {
+        hari_ini: namaHari,
+        tanggal: todayDate,
+        debug: {
+          server_day: hariIni,
+          server_hari: namaHari,
+          now: new Date().toString()
+        }
+      }
     });
   } catch (error) {
     console.error('Error fetching jadwal guru:', error);
     res.status(500).json({
       success: false,
-      message: 'Gagal mengambil jadwal guru'
+      message: 'Gagal mengambil jadwal guru',
+      error: error.message
     });
   }
 };
-
 
 const getSiswaByKelasGuru = async (req, res) => {
   try {
@@ -192,7 +318,11 @@ const getSiswaByKelasGuru = async (req, res) => {
     // Ambil daftar siswa dengan status 'success'
     const siswaList = data
       .filter(item => item.status === 'success')
-      .map(item => ({ nama: item.nama }));
+      .map(item => ({ 
+        nama: item.nama,
+        krs_id: item.krs_id,
+        tahun_akademik_id: item.tahun_akademik_id  // Menggunakan tahun_akademik_id
+      }));
 
     res.status(200).json({
       success: true,
@@ -1278,150 +1408,6 @@ const createAbsensiSiswa = async (req, res) => {
   }
 };
 
-const getRingkasanDashboardGuru = async (req, res) => {
-  const userId = req.user.userId;
-
-  try {
-    // Ambil NIP guru
-    const [[guru]] = await db.query(`
-      SELECT nip FROM db_cina.guru WHERE user_id = ?
-    `, [userId]);
-    if (!guru) return res.status(404).json({ success: false, message: 'Guru tidak ditemukan' });
-
-    const guruNip = guru.nip;
-    const currentTime = new Date().toTimeString().slice(0, 8); // HH:MM:SS
-
-    // Cek jadwal mengajar berdasarkan waktu dan kelas yang diasuh
-    const [mengajar] = await db.query(`
-      SELECT m.nama_mapel, k.kelas_id, k.nama_kelas
-      FROM db_cina.jadwal j
-      JOIN db_cina.master_jadwal mj ON j.master_jadwal_id = mj.master_jadwal_id
-      JOIN db_cina.mapel m ON j.mapel_id = m.mapel_id
-      JOIN db_cina.kelas k ON j.kelas_id = k.kelas_id
-      WHERE k.guru_nip = ?
-        AND LOWER(j.hari) = LOWER(DAYNAME(CURDATE()))
-        AND TIME(mj.start) <= ?
-        AND TIME(mj.finish) >= ?
-      LIMIT 1
-    `, [guruNip, currentTime, currentTime]);
-
-    // Ambil kelas yang dibina sebagai wali kelas
-    const [[wali]] = await db.query(`
-      SELECT kelas_id, nama_kelas FROM db_cina.kelas WHERE guru_nip = ?
-    `, [guruNip]);
-
-    // Tugas belum dikerjakan (semua kelas guru)
-    const [[tugasBelum]] = await db.query(`
-      SELECT COUNT(*) AS total 
-      FROM db_cina.krs_detail_materi d
-      JOIN db_cina.materi m ON d.materi_id = m.materi_id
-      JOIN db_cina.krs k ON d.krs_id = k.krs_id
-      JOIN db_cina.kelas kl ON k.kelas_id = kl.kelas_id
-      WHERE kl.guru_nip = ? AND d.tanggal_pengumpulan IS NULL
-    `, [guruNip]);
-
-    // Tugas terlambat
-    const [[tugasTerlambat]] = await db.query(`
-      SELECT COUNT(*) AS total 
-      FROM db_cina.krs_detail_materi d
-      JOIN db_cina.materi m ON d.materi_id = m.materi_id
-      JOIN db_cina.krs k ON d.krs_id = k.krs_id
-      JOIN db_cina.kelas kl ON k.kelas_id = kl.kelas_id
-      WHERE kl.guru_nip = ? AND d.tanggal_pengumpulan IS NULL AND m.tanggal < CURDATE()
-    `, [guruNip]);
-
-    // Materi hari ini oleh guru
-    const [[materiHariIni]] = await db.query(`
-      SELECT COUNT(*) AS total
-      FROM db_cina.materi m
-      JOIN db_cina.kelas k ON m.kelas_id = k.kelas_id
-      WHERE k.guru_nip = ? AND DATE(m.tanggal) = CURDATE()
-    `, [guruNip]);
-
-    // Absensi siswa tidak hadir
-    const [[absensiTidakHadir]] = await db.query(`
-      SELECT COUNT(*) AS total
-      FROM db_cina.absensi a
-      WHERE a.guru_nip = ?
-        AND DATE(a.tanggal) = CURDATE()
-        AND a.keterangan IN ('i', 's', 'a')
-    `, [guruNip]);
-
-    // Inisialisasi data wali kelas
-    let waliData = {
-      kelas: wali ? wali.nama_kelas : null,
-      tugas_belum_dikerjakan: 0,
-      absensi_tidak_hadir: 0,
-      tugas_terlambat: 0,
-      materi_hari_ini: 0
-    };
-
-    if (wali) {
-      const kelasId = wali.kelas_id;
-
-      // Tugas belum dikerjakan di kelas wali
-      const [[waliTugasBelum]] = await db.query(`
-        SELECT COUNT(*) AS total 
-        FROM db_cina.krs_detail_materi d
-        JOIN db_cina.krs k ON d.krs_id = k.krs_id
-        WHERE k.kelas_id = ? AND d.tanggal_pengumpulan IS NULL
-      `, [kelasId]);
-
-      // Tugas terlambat
-      const [[waliTugasTerlambat]] = await db.query(`
-        SELECT COUNT(*) AS total 
-        FROM db_cina.krs_detail_materi d
-        JOIN db_cina.krs k ON d.krs_id = k.krs_id
-        JOIN db_cina.materi m ON d.materi_id = m.materi_id
-        WHERE k.kelas_id = ? AND d.tanggal_pengumpulan IS NULL AND m.tanggal < CURDATE()
-      `, [kelasId]);
-
-      // Absensi tidak hadir
-      const [[waliAbsensi]] = await db.query(`
-        SELECT COUNT(*) AS total
-        FROM db_cina.absensi a
-        JOIN db_cina.krs k ON a.krs_id = k.krs_id
-        WHERE k.kelas_id = ? AND DATE(a.tanggal) = CURDATE()
-        AND a.keterangan IN ('i', 's', 'a')
-      `, [kelasId]);
-
-      // Materi untuk kelas wali hari ini
-      const [[waliMateriHariIni]] = await db.query(`
-        SELECT COUNT(*) AS total
-        FROM db_cina.materi
-        WHERE kelas_id = ? AND DATE(tanggal) = CURDATE()
-      `, [kelasId]);
-
-      waliData = {
-        kelas: wali.nama_kelas,
-        tugas_belum_dikerjakan: waliTugasBelum.total,
-        tugas_terlambat: waliTugasTerlambat.total,
-        absensi_tidak_hadir: waliAbsensi.total,
-        materi_hari_ini: waliMateriHariIni.total
-      };
-    }
-
-    res.status(200).json({
-      success: true,
-      mengajar: {
-        mapel: mengajar.length ? mengajar[0].nama_mapel : null,
-        kelas: mengajar.length ? mengajar[0].nama_kelas : null,
-        tugas_belum_dikerjakan: tugasBelum.total,
-        absensi_tidak_hadir: absensiTidakHadir.total,
-        tugas_terlambat: tugasTerlambat.total,
-        materi_hari_ini: materiHariIni.total
-      },
-      wali_kelas: waliData
-    });
-
-  } catch (err) {
-    console.error('Error getRingkasanDashboardGuru:', err);
-    res.status(500).json({ success: false, message: 'Terjadi kesalahan', error: err.message });
-  }
-};
-
-
-
 
 const getBerita = async (req, res) => {
   try {
@@ -1794,6 +1780,7 @@ const getSiswaPengumpulanTugas = async (req, res) => {
       SELECT 
         s.nis,
         s.nama_siswa,
+         k.krs_id,
         kdm.tanggal_pengumpulan,
         kdm.uraian,
         kdm.file_jawaban,
@@ -2164,12 +2151,14 @@ const getSuratIzinSakit = async (req, res) => {
         s.nis,
         DATE(a.tanggal) AS tanggal_izin,
         a.keterangan,
+        a.uraian,
         a.surat,
         a.status_surat
       FROM absensi a
       JOIN krs k ON a.krs_id = k.krs_id
       JOIN siswa s ON k.siswa_nis = s.nis
-      WHERE a.keterangan IN ('i', 's') AND a.status_surat = 'menunggu'
+      WHERE a.keterangan IN ('i', 's') 
+        AND a.status_surat IN ('menunggu', 'terima', 'tolak')
       ORDER BY a.tanggal DESC
     `);
 
@@ -2222,8 +2211,644 @@ const tolakSuratIzin = async (req, res) => {
   }
 };
 
+const getSiswaByKelasGuruwali = async (req, res) => {
+  try {
+    const userId = req.user.userId;
 
+    // 1. Ambil NIP guru dari user_id di JWT
+    const [teacher] = await db.query(
+      `SELECT nip FROM guru WHERE user_id = ?`,
+      [userId]
+    );
 
+    if (!teacher.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Data guru tidak ditemukan'
+      });
+    }
+
+    const guru_nip = teacher[0].nip;
+
+    // 2. Ambil daftar kelas dimana guru ini sebagai wali kelas
+    const [kelasList] = await db.query(`
+      SELECT 
+        kelas_id,
+        nama_kelas,
+        tingkat,
+        jenjang
+      FROM kelas
+      WHERE guru_nip = ?
+      ORDER BY jenjang, tingkat, nama_kelas
+    `, [guru_nip]);
+
+    if (!kelasList.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Guru tidak menjadi wali kelas manapun'
+      });
+    }
+
+    // 3. Untuk setiap kelas, ambil daftar siswa
+    const result = [];
+    
+    for (const kelas of kelasList) {
+      const [siswaList] = await db.query(`
+        SELECT 
+          k.krs_id,
+          s.nis,
+          s.nama_siswa,
+          s.tanggal_lahir,
+          s.jenis_kelamin,
+          s.agama,
+          s.foto_profil
+        FROM krs k
+        JOIN siswa s ON k.siswa_nis = s.nis
+        WHERE k.kelas_id = ?
+        ORDER BY s.nama_siswa
+      `, [kelas.kelas_id]);
+
+      if (siswaList.length) {
+        result.push({
+          kelas_id: kelas.kelas_id,
+          nama_kelas: kelas.nama_kelas,
+          tingkat: kelas.tingkat,
+          jenjang: kelas.jenjang,
+          jumlah_siswa: siswaList.length,
+          siswa: siswaList
+        });
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      data: result
+    });
+
+  } catch (error) {
+    console.error('Error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Terjadi kesalahan server',
+      error: error.message
+    });
+  }
+};
+
+const getSiswaDetailByKelasId = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { kelas_id } = req.params;
+
+    // 1. Validasi parameter
+    if (!kelas_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'Parameter kelas_id diperlukan'
+      });
+    }
+
+    // 2. Ambil NIP guru dari user_id di JWT
+    const [teacher] = await db.query(
+      `SELECT nip FROM guru WHERE user_id = ?`,
+      [userId]
+    );
+
+    if (!teacher.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Data guru tidak ditemukan'
+      });
+    }
+
+    const guru_nip = teacher[0].nip;
+
+    // 3. Verifikasi bahwa guru memang mengajar di kelas ini
+    const [kelasCheck] = await db.query(`
+      SELECT 1 
+      FROM krs_detail kd
+      JOIN krs k ON kd.krs_id = k.krs_id
+      WHERE k.kelas_id = ?
+      AND kd.guru_nip = ?
+      LIMIT 1
+    `, [kelas_id, guru_nip]);
+
+    if (!kelasCheck.length) {
+      return res.status(403).json({
+        success: false,
+        message: 'Anda tidak mengajar di kelas ini atau kelas tidak ditemukan'
+      });
+    }
+
+    // 4. Ambil detail kelas
+    const [kelasDetail] = await db.query(`
+      SELECT 
+        kelas_id,
+        nama_kelas,
+        tingkat,
+        jenjang,
+        guru_nip AS wali_kelas_nip,
+        (SELECT nama_guru FROM guru WHERE nip = guru_nip) AS wali_kelas
+      FROM kelas
+      WHERE kelas_id = ?
+    `, [kelas_id]);
+
+    // 5. Ambil daftar siswa di kelas ini (tanpa data mapel)
+    const [siswaList] = await db.query(`
+      SELECT DISTINCT
+        k.krs_id,
+        s.nis,
+        s.nama_siswa,
+        s.tanggal_lahir,
+        s.jenis_kelamin,
+        s.agama,
+        s.foto_profil
+      FROM krs k
+      JOIN siswa s ON k.siswa_nis = s.nis
+      JOIN krs_detail kd ON k.krs_id = kd.krs_id
+      WHERE k.kelas_id = ?
+      AND kd.guru_nip = ?
+      ORDER BY s.nama_siswa
+    `, [kelas_id, guru_nip]);
+
+    // 6. Format response
+    const result = {
+      kelas: kelasDetail[0],
+      siswa: siswaList
+    };
+
+    res.status(200).json({
+      success: true,
+      data: result
+    });
+
+  } catch (error) {
+    console.error('Error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Terjadi kesalahan server',
+      error: error.message
+    });
+  }
+};
+
+const getRaporBySiswaKelasWali = async (req, res) => {
+  const userId = req.user.userId;
+  const { krs_id } = req.params;
+
+  try {
+    // 1. Ambil NIP guru dari user_id di JWT
+    const [teacher] = await db.query(
+      `SELECT nip FROM guru WHERE user_id = ?`,
+      [userId]
+    );
+
+    if (!teacher.length) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Data guru tidak ditemukan' 
+      });
+    }
+
+    const guru_nip = teacher[0].nip;
+
+    // 2. Verifikasi bahwa guru adalah wali kelas dari siswa dengan krs_id tersebut
+    const [verifikasi] = await db.query(`
+      SELECT 1 
+      FROM krs k
+      JOIN kelas kl ON k.kelas_id = kl.kelas_id
+      WHERE k.krs_id = ?
+      AND kl.guru_nip = ?
+      LIMIT 1
+    `, [krs_id, guru_nip]);
+
+    if (!verifikasi.length) {
+      return res.status(403).json({
+        success: false,
+        message: 'Anda bukan wali kelas dari siswa ini atau data tidak ditemukan'
+      });
+    }
+
+    // 3. Ambil biodata siswa
+    const [siswaResults] = await db.query(`
+      SELECT 
+        s.nis,
+        s.nisn,
+        s.nama_siswa,
+        s.tempat_lahir,
+        s.tanggal_lahir,
+        s.alamat,
+        s.jenis_kelamin,
+        s.agama,
+        s.no_telepon,
+        s.foto_profil,
+        u.username,
+        u.email
+      FROM krs k
+      JOIN siswa s ON k.siswa_nis = s.nis
+      JOIN user u ON s.user_id = u.user_id
+      WHERE k.krs_id = ?
+    `, [krs_id]);
+    
+    const siswa = siswaResults[0];
+    
+    if (!siswa) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Data siswa tidak ditemukan' 
+      });
+    }
+
+    // 4. Ambil detail kelas
+    const [[kelas]] = await db.query(`
+      SELECT 
+        kl.kelas_id,
+        kl.nama_kelas,
+        kl.tingkat,
+        kl.jenjang,
+        ta.tahun_akademik_id,
+        ta.tahun_mulai,
+        ta.tahun_berakhir,
+        kr.nama_kurikulum,
+        g.nip AS wali_kelas_nip,
+        g.nama_guru AS wali_kelas,
+        g.foto_profil AS foto_wali_kelas
+      FROM krs k
+      JOIN kelas kl ON k.kelas_id = kl.kelas_id
+      JOIN tahun_akademik ta ON (kl.kurikulum_id = ta.kurikulum_id AND kl.tahun_akademik_id = ta.tahun_akademik_id)
+      JOIN kurikulum kr ON kl.kurikulum_id = kr.kurikulum_id
+      LEFT JOIN guru g ON kl.guru_nip = g.nip
+      WHERE k.krs_id = ?
+      LIMIT 1
+    `, [krs_id]);
+
+    if (!kelas) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Data kelas tidak ditemukan' 
+      });
+    }
+
+    // 5. Ambil semua nilai
+    const [nilaiList] = await db.query(`
+      SELECT 
+        kd.mapel_id,
+        m.nama_mapel,
+        kd.nilai AS nilai_pengetahuan,
+        kd.keterampilan AS nilai_keterampilan,
+        kd.kkm,
+        CASE
+          WHEN kd.nilai IS NOT NULL AND kd.keterampilan IS NOT NULL 
+          THEN ROUND((kd.nilai + kd.keterampilan) / 2, 2)
+          ELSE NULL
+        END AS nilai_akhir,
+        CASE 
+          WHEN kd.nilai IS NOT NULL AND kd.keterampilan IS NOT NULL AND
+               (kd.nilai + kd.keterampilan) / 2 >= kd.kkm 
+          THEN 'Tuntas'
+          WHEN kd.nilai IS NULL OR kd.keterampilan IS NULL
+          THEN 'Belum Lengkap'
+          ELSE 'Belum Tuntas'
+        END AS status,
+        g.nama_guru AS guru_pengampu
+      FROM krs_detail kd
+      JOIN mapel m ON kd.mapel_id = m.mapel_id
+      LEFT JOIN guru g ON kd.guru_nip = g.nip
+      WHERE kd.krs_id = ?
+      ORDER BY m.nama_mapel ASC
+    `, [krs_id]);
+
+    // 6. Hitung statistik nilai
+    const nilaiTerisi = nilaiList.filter(n => n.nilai_pengetahuan !== null && n.nilai_keterampilan !== null);
+    const totalMapel = nilaiTerisi.length;
+    const totalTuntas = nilaiTerisi.filter(n => n.status === 'Tuntas').length;
+    const totalBelumTuntas = totalMapel - totalTuntas;
+    
+    const rataRataPengetahuan = totalMapel > 0 
+      ? parseFloat((nilaiTerisi.reduce((sum, n) => sum + n.nilai_pengetahuan, 0) / totalMapel).toFixed(2))
+      : 0;
+
+    const rataRataKeterampilan = totalMapel > 0 
+      ? parseFloat((nilaiTerisi.reduce((sum, n) => sum + n.nilai_keterampilan, 0) / totalMapel).toFixed(2))
+      : 0;
+
+    const rataRataAkhir = totalMapel > 0 
+      ? parseFloat((nilaiTerisi.reduce((sum, n) => sum + n.nilai_akhir, 0) / totalMapel).toFixed(2))
+      : 0;
+
+    // 7. Siapkan response
+    const responseData = {
+      siswa: {
+        nis: siswa.nis,
+        nisn: siswa.nisn,
+        nama_siswa: siswa.nama_siswa,
+        tempat_lahir: siswa.tempat_lahir,
+        tanggal_lahir: siswa.tanggal_lahir,
+        alamat: siswa.alamat,
+        jenis_kelamin: siswa.jenis_kelamin,
+        agama: siswa.agama,
+        no_telepon: siswa.no_telepon,
+        foto_profil: siswa.foto_profil
+      },
+      kelas: {
+        kelas_id: kelas.kelas_id,
+        nama_kelas: kelas.nama_kelas,
+        tingkat: kelas.tingkat,
+        jenjang: kelas.jenjang,
+        tahun_akademik_id: kelas.tahun_akademik_id,
+        tahun_mulai: kelas.tahun_mulai,
+        tahun_berakhir: kelas.tahun_berakhir,
+        nama_kurikulum: kelas.nama_kurikulum,
+        wali_kelas: kelas.wali_kelas,
+        foto_wali_kelas: kelas.foto_wali_kelas
+      },
+      nilai: nilaiList,
+      statistik: {
+        total_mapel: totalMapel,
+        total_tuntas: totalTuntas,
+        total_belum_tuntas: totalBelumTuntas,
+        total_belum_lengkap: nilaiList.length - totalMapel,
+        rata_rata_pengetahuan: rataRataPengetahuan,
+        rata_rata_keterampilan: rataRataKeterampilan,
+        rata_rata_nilai_akhir: rataRataAkhir
+      },
+      catatan: {
+        tanggal_cetak: new Date().toISOString(),
+        keterangan: 'Data rapor ini hanya dapat diakses oleh wali kelas'
+      }
+    };
+
+    res.status(200).json({
+      success: true,
+      message: 'Data rapor siswa berhasil diambil',
+      data: responseData
+    });
+
+  } catch (error) {
+    console.error('Error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Terjadi kesalahan server',
+      error: error.message
+    });
+  }
+};
+
+const getTahunAkademik = async (req, res) => {
+  try {
+    // Query untuk mengambil semua data tahun akademik
+    const [tahunAkademik] = await db.query(`
+      SELECT 
+        tahun_akademik_id,
+        kurikulum_id,
+        tahun_mulai,
+        tahun_berakhir,
+        status,
+        created_at
+      FROM tahun_akademik
+      ORDER BY tahun_mulai DESC
+    `);
+
+    // Format data untuk response
+    const formattedData = tahunAkademik.map(item => ({
+      id: item.tahun_akademik_id,
+      kurikulum_id: item.kurikulum_id,
+      tahun_mulai: item.tahun_mulai,
+      tahun_berakhir: item.tahun_berakhir,
+      status: item.status,
+      created_at: item.created_at,
+      // Tambahan field untuk kemudahan tampilan
+      label: `${item.tahun_mulai.getFullYear()}/${item.tahun_berakhir.getFullYear()}`,
+      is_active: item.status === 'aktif'
+    }));
+
+    res.status(200).json({
+      success: true,
+      data: formattedData
+    });
+
+  } catch (error) {
+    console.error('Error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Terjadi kesalahan server',
+      error: error.message
+    });
+  }
+};
+
+const getDetailTugas = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { tugas_id } = req.params;
+
+    // 1. Get teacher's NIP
+    const [teacher] = await db.query(
+      `SELECT nip FROM guru WHERE user_id = ?`,
+      [userId]
+    );
+
+    if (!teacher.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Data guru tidak ditemukan'
+      });
+    }
+
+    const guru_nip = teacher[0].nip;
+
+    // 2. Get assignment details with verification that teacher owns this assignment
+    const [tugasDetail] = await db.query(`
+      SELECT 
+        t.tugas_id,
+        t.judul,
+        t.deskripsi,
+        t.lampiran,
+        t.tenggat_kumpul,
+        t.created_at,
+        m.mapel_id,
+        m.nama_mapel,
+        k.kelas_id,
+        k.nama_kelas,
+        COUNT(DISTINCT kdm.krs_id) as jumlah_siswa,
+        SUM(CASE WHEN kdm.tanggal_pengumpulan IS NOT NULL THEN 1 ELSE 0 END) as jumlah_dikumpulkan,
+        SUM(CASE WHEN kdm.tanggal_pengumpulan > t.tenggat_kumpul THEN 1 ELSE 0 END) as jumlah_terlambat
+      FROM tugas t
+      JOIN krs_detail_materi kdm ON t.tugas_id = kdm.tugas_id
+      JOIN krs_detail kd ON kdm.krs_id = kd.krs_id
+      JOIN mapel m ON kd.mapel_id = m.mapel_id
+      JOIN krs kr ON kd.krs_id = kr.krs_id
+      JOIN kelas k ON kr.kelas_id = k.kelas_id
+      WHERE t.tugas_id = ?
+        AND kd.guru_nip = ?
+      GROUP BY t.tugas_id, t.judul, t.deskripsi, t.lampiran, t.tenggat_kumpul, t.created_at, 
+               m.mapel_id, m.nama_mapel, k.kelas_id, k.nama_kelas
+      LIMIT 1
+    `, [tugas_id, guru_nip]);
+
+    if (!tugasDetail.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tugas tidak ditemukan atau Anda tidak memiliki akses'
+      });
+    }
+
+    // 3. Get students who have submitted the assignment
+    // For students who have submitted
+    const [siswaPengumpulan] = await db.query(`
+      SELECT 
+        s.nis,
+        s.nama_siswa,
+        kdm.krs_id,
+        kdm.tanggal_pengumpulan,
+        kdm.uraian,
+        kdm.file_jawaban,
+        kdm.nilai,
+        CASE 
+          WHEN kdm.tanggal_pengumpulan > t.tenggat_kumpul THEN 'Terlambat'
+          ELSE 'Tepat Waktu'
+        END as status_pengumpulan
+      FROM krs_detail_materi kdm
+      JOIN krs_detail kd ON kdm.krs_id = kd.krs_id
+      JOIN krs k ON kd.krs_id = k.krs_id
+      JOIN siswa s ON k.siswa_nis = s.nis  /* Changed from k.nis to k.siswa_nis */
+      JOIN tugas t ON kdm.tugas_id = t.tugas_id
+      WHERE kdm.tugas_id = ?
+        AND kd.guru_nip = ?
+        AND kdm.tanggal_pengumpulan IS NOT NULL
+      ORDER BY kdm.tanggal_pengumpulan DESC
+    `, [tugas_id, guru_nip]);
+
+    // For students who haven't submitted yet
+    const [siswaBelumMengumpulkan] = await db.query(`
+      SELECT 
+        s.nis,
+        s.nama_siswa,
+        k.krs_id
+      FROM krs_detail kd
+      JOIN krs k ON kd.krs_id = k.krs_id
+      JOIN siswa s ON k.siswa_nis = s.nis  /* Changed from k.nis to k.siswa_nis */
+      LEFT JOIN krs_detail_materi kdm ON kd.krs_id = kdm.krs_id AND kdm.tugas_id = ?
+      WHERE kd.guru_nip = ?
+        AND (kdm.tanggal_pengumpulan IS NULL OR kdm.kdm_id IS NULL)
+      ORDER BY s.nama_siswa
+    `, [tugas_id, guru_nip]);
+
+    // 5. Format response
+    const responseData = {
+      detail: tugasDetail[0],
+      pengumpulan: {
+        sudah_mengumpulkan: siswaPengumpulan,
+        belum_mengumpulkan: siswaBelumMengumpulkan,
+        total_sudah: siswaPengumpulan.length,
+        total_belum: siswaBelumMengumpulkan.length
+      }
+    };
+
+    res.status(200).json({
+      success: true,
+      data: responseData
+    });
+
+  } catch (error) {
+    console.error('Error in getDetailTugas:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Terjadi kesalahan server',
+      error: error.message
+    });
+  }
+};
+
+const getDetailMateri = async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const { materi_id } = req.params;
+
+    // 1. Get teacher's NIP
+    const [teacher] = await db.query(
+      `SELECT nip FROM guru WHERE user_id = ?`,
+      [userId]
+    );
+
+    if (!teacher.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Data guru tidak ditemukan'
+      });
+    }
+
+    const guru_nip = teacher[0].nip;
+
+    // 2. Get material details with verification
+    const [materiDetail] = await db.query(`
+      SELECT 
+        m.materi_id,
+        m.nama_materi,
+        m.uraian,
+        m.lampiran,
+        m.created_at,
+        mp.mapel_id,
+        mp.nama_mapel,
+        k.kelas_id,
+        k.nama_kelas,
+        COUNT(DISTINCT kdm.krs_id) as jumlah_siswa
+      FROM materi m
+      JOIN krs_detail_materi kdm ON m.materi_id = kdm.materi_id
+      JOIN krs_detail kd ON kdm.krs_id = kd.krs_id
+      JOIN mapel mp ON kd.mapel_id = mp.mapel_id
+      JOIN krs kr ON kd.krs_id = kr.krs_id
+      JOIN kelas k ON kr.kelas_id = k.kelas_id
+      WHERE m.materi_id = ?
+        AND kd.guru_nip = ?
+      GROUP BY m.materi_id, m.nama_materi, m.uraian, m.lampiran, m.created_at, 
+               mp.mapel_id, mp.nama_mapel, k.kelas_id, k.nama_kelas
+      LIMIT 1
+    `, [materi_id, guru_nip]);
+
+    if (!materiDetail.length) {
+      return res.status(404).json({
+        success: false,
+        message: 'Materi tidak ditemukan atau Anda tidak memiliki akses'
+      });
+    }
+
+    // 3. Get students who have access to this material
+    const [siswaList] = await db.query(`
+      SELECT 
+        s.nis,
+        s.nama_siswa,
+        k.krs_id,
+        kdm.created_at as tanggal_akses
+      FROM krs_detail_materi kdm
+      JOIN krs_detail kd ON kdm.krs_id = kd.krs_id
+      JOIN krs k ON kd.krs_id = k.krs_id
+      JOIN siswa s ON k.siswa_nis = s.nis  /* Changed from k.nis to k.siswa_nis */
+      WHERE kdm.materi_id = ?
+        AND kd.guru_nip = ?
+      ORDER BY s.nama_siswa
+    `, [materi_id, guru_nip]);
+
+    // 4. Format response
+    const responseData = {
+      detail: materiDetail[0],
+      siswa: siswaList
+    };
+
+    res.status(200).json({
+      success: true,
+      data: responseData
+    });
+
+  } catch (error) {
+    console.error('Error in getDetailMateri:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Terjadi kesalahan server',
+      error: error.message
+    });
+  }
+};
 
 // Add these to your exports
 module.exports = {
@@ -2243,7 +2868,6 @@ module.exports = {
   getMateriDetailById,
   createAbsensiSiswa,
   getAbsensiByJadwal,
-  getRingkasanDashboardGuru,
   getBerita,
   getBeritaById,
 createBeritaGuru,
@@ -2254,5 +2878,11 @@ beriNilaiTugasSiswa,
 downloadRaporPdf,
 getSuratIzinSakit,
 setujuiSuratIzin,
-tolakSuratIzin
+tolakSuratIzin,
+getSiswaByKelasGuruwali,
+getSiswaDetailByKelasId,
+getRaporBySiswaKelasWali,
+getTahunAkademik,
+getDetailTugas,
+  getDetailMateri
 };

@@ -6,6 +6,8 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { ObjectId } = require('bson');
+const nodemailer = require('nodemailer');
+const transporter = require('../config/emailConfig');
 
 // Helper: deteksi kata berbahaya (jaga-jaga)
 const containsSQLInjection = (input) => {
@@ -219,10 +221,171 @@ const editAdmin = async (req, res) => {
   }
 };
 
+const sendAdminLoginEmail = async (email, username, password) => {
+  const mailOptions = {
+    from: `"SINA Admin" <${process.env.EMAIL_FROM}>`,
+    to: email,
+    subject: 'Informasi Login Admin',
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #2c3e50;">Informasi Login Admin</h2>
+        <p>Berikut adalah informasi login Anda untuk mengakses sistem admin:</p>
+        
+        <div style="background: #f5f5f5; padding: 15px; border-radius: 5px;">
+          <p><strong>Email:</strong> ${email}</p>
+          <p><strong>Username:</strong> ${username}</p>
+          <p><strong>Password:</strong> ${password}</p>
+        </div>
+        
+        <p style="margin-top: 20px;">
+          <a href="${process.env.ADMIN_LOGIN_URL}" 
+             style="background: #3498db; color: white; padding: 10px 15px; 
+                    text-decoration: none; border-radius: 5px;">
+            Login Sekarang
+          </a>
+        </p>
+        
+        <p style="font-size: 12px; color: #7f8c8d; margin-top: 30px;">
+          Harap simpan informasi ini dengan aman dan jangan berikan kepada siapapun.
+        </p>
+      </div>
+    `
+  };
+
+  await transporter.sendMail(mailOptions);
+};
+
+// Kirim email ke semua admin
+const sendEmailToAllAdmins = async (req, res) => {
+  try {
+    // Ambil semua data admin
+    const [admins] = await db.query(
+      `SELECT a.admin_id, a.token, u.email, u.username 
+       FROM admin a
+       JOIN user u ON a.user_id = u.user_id
+       WHERE u.role = 'admin'`
+    );
+
+    // Kirim email ke setiap admin
+    for (const admin of admins) {
+      // Jika token kosong, buat password baru
+      if (!admin.token) {
+        const newPassword = generateRandomPassword();
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
+        
+        // Update password di user dan token di admin
+        await db.query('BEGIN');
+        
+        await db.query(
+          'UPDATE user SET password = ? WHERE email = ?',
+          [hashedPassword, admin.email]
+        );
+        
+        await db.query(
+          'UPDATE admin SET token = ? WHERE admin_id = ?',
+          [newPassword, admin.admin_id]
+        );
+        
+        await db.query('COMMIT');
+        
+        // Kirim email dengan password baru
+        await sendAdminLoginEmail(admin.email, admin.username, newPassword);
+      } else {
+        // Gunakan token yang sudah ada sebagai password plaintext
+        await sendAdminLoginEmail(admin.email, admin.username, admin.token);
+      }
+    }
+
+    res.status(200).json({ 
+      success: true,
+      message: 'Email informasi login telah dikirim ke semua admin'
+    });
+  } catch (error) {
+    await db.query('ROLLBACK');
+    console.error('Error sendEmailToAllAdmins:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Gagal mengirim email ke admin',
+      error: error.message 
+    });
+  }
+};
+
+// Kirim email ke admin tertentu
+const sendEmailToAdminById = async (req, res) => {
+  const { admin_id } = req.params;
+
+  try {
+    // Ambil data admin
+    const [adminRows] = await db.query(
+      `SELECT a.admin_id, a.token, u.email, u.username 
+       FROM admin a
+       JOIN user u ON a.user_id = u.user_id
+       WHERE a.admin_id = ? AND u.role = 'admin'`,
+      [admin_id]
+    );
+
+    if (adminRows.length === 0) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Admin tidak ditemukan' 
+      });
+    }
+
+    const admin = adminRows[0];
+    let passwordToSend = admin.token;
+
+    // Jika token kosong, buat password baru
+    if (!admin.token) {
+      const newPassword = generateRandomPassword();
+      const hashedPassword = await bcrypt.hash(newPassword, 10);
+      
+      // Update password di user dan token di admin
+      await db.query('BEGIN');
+      
+      await db.query(
+        'UPDATE user SET password = ? WHERE email = ?',
+        [hashedPassword, admin.email]
+      );
+      
+      await db.query(
+        'UPDATE admin SET token = ? WHERE admin_id = ?',
+        [newPassword, admin.admin_id]
+      );
+      
+      await db.query('COMMIT');
+      
+      passwordToSend = newPassword;
+    }
+
+    // Kirim email
+    await sendAdminLoginEmail(admin.email, admin.username, passwordToSend);
+
+    res.status(200).json({ 
+      success: true,
+      message: 'Email informasi login telah dikirim',
+      data: {
+        admin_id: admin.admin_id,
+        email: admin.email
+      }
+    });
+  } catch (error) {
+    await db.query('ROLLBACK');
+    console.error('Error sendEmailToAdminById:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Gagal mengirim email',
+      error: error.message 
+    });
+  }
+};
+
 module.exports = {
   createAdmin,
   getAdminbyuser,
   getAllAdmin,
   deleteAdmin,
-  editAdmin
+  editAdmin,
+  sendEmailToAllAdmins,
+  sendEmailToAdminById
 };

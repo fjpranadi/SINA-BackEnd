@@ -194,10 +194,19 @@ const getTugas = async (req, res) => {
         t.created_at,
         mp.nama_mapel,
         kls.nama_kelas,
-	kdm.uraian,
+        kdm.uraian,
         kdm.file_jawaban,
         kdm.nilai,
-        kdm.tanggal_pengumpulan
+        kdm.tanggal_pengumpulan,
+        CASE 
+          WHEN kdm.tanggal_pengumpulan IS NOT NULL THEN 'done'
+          ELSE 'not_yet'
+        END AS status_pengerjaan,
+        CASE
+          WHEN kdm.tanggal_pengumpulan > t.tenggat_kumpul THEN 'terlambat'
+          WHEN kdm.tanggal_pengumpulan IS NOT NULL THEN 'tepat_waktu'
+          ELSE 'belum_dikumpulkan'
+        END AS status_pengumpulan
       FROM tugas t
       JOIN krs_detail_materi kdm ON t.tugas_id = kdm.tugas_id
       JOIN krs_detail kd ON kdm.krs_id = kd.krs_id AND kdm.mapel_id = kd.mapel_id
@@ -210,9 +219,19 @@ const getTugas = async (req, res) => {
 
     const [tugasList] = await db.query(query, [mapel_id, krsIds]);
 
+    // Format response
+    const formattedTugas = tugasList.map(tugas => ({
+      ...tugas,
+      status: tugas.status_pengerjaan, // 'done' atau 'not_yet'
+      detail_status: {
+        pengerjaan: tugas.status_pengerjaan,
+        pengumpulan: tugas.status_pengumpulan // 'tepat_waktu', 'terlambat', atau 'belum_dikumpulkan'
+      }
+    }));
+
     res.status(200).json({
       status: 200,
-      data: tugasList
+      data: formattedTugas
     });
 
   } catch (err) {
@@ -220,6 +239,7 @@ const getTugas = async (req, res) => {
     res.status(500).json({ status: 500, message: 'Gagal mengambil data tugas.' });
   }
 };
+
 // GET materi detail
 const getMateriDetail = async (req, res) => {
   try {

@@ -6,7 +6,10 @@ const {
   updateSiswa,
   deleteSiswa,
   getSiswaBynis,
-  importSiswaFromExcel
+  importSiswaFromExcel,
+  getRekapAbsenSiswa,
+  sendEmailToStudentByNis,
+  getRaporSiswa
 } = require('../controller/siswaController');
 
 const { verifyAdmin } = require('../controller/authController');
@@ -20,5 +23,12 @@ router.get('/admin/siswa/:nis',verifyAdmin, getSiswaBynis);                  // 
 router.put('/admin/siswa/:nis',verifyAdmin,  uploadsiswa.single('foto_profil'),  updateSiswa);                       // Update siswa
 router.delete('/admin/siswa/:nis',verifyAdmin, deleteSiswa);                     // Hapus 
 router.post('/admin/siswa/:kelas_id', verifyAdmin, uploadsiswa.single('fileExcel'), importSiswaFromExcel); 
+router.get('/admin/siswa/rekap/:kelas_id',verifyAdmin, getRekapAbsenSiswa);  
+router.post('/admin/siswa/sendemail/:nis', verifyAdmin, sendEmailToStudentByNis);
+router.get('/admin/siswa/rapor/:nis',verifyAdmin, getRaporSiswa);
+
+
+//beda njir
+
 
 module.exports = router;

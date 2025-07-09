@@ -5,88 +5,54 @@ const JWT_SECRET = 'token-jwt';
 const crypto = require('crypto');
 
 // CREATE - Tambah Tahun Akademik
-// CREATE - Tambah Tahun Akademik
 const tambahTahunAkademik = async (req, res) => {
-  const { kurikulum_id, tahun_mulai, tahun_berakhir, status } = req.body;
+  // Ambil data yang diperlukan dari body request.
+  const { kurikulum_id, tahun_mulai, tahun_berakhir } = req.body;
 
-  if (!kurikulum_id || !tahun_mulai || !tahun_berakhir || !status) {
-    return res.status(400).json({ message: 'Semua field wajib diisi!' });
+  // Validasi input
+  if (!kurikulum_id || !tahun_mulai || !tahun_berakhir) {
+    return res.status(400).json({ message: 'Field kurikulum_id, tahun_mulai, dan tahun_berakhir wajib diisi!' });
   }
 
   try {
-    // Check if kurikulum exists
+    // 1. Periksa apakah kurikulum ada untuk memberikan pesan error yang jelas
     const [kurikulum] = await db.query(
-      `SELECT * FROM kurikulum WHERE kurikulum_id = ?`, 
+      `SELECT nama_kurikulum FROM kurikulum WHERE kurikulum_id = ?`, 
       [kurikulum_id]
     );
 
     if (kurikulum.length === 0) {
-      return res.status(400).json({ message: 'Kurikulum tidak ditemukan.' });
+      return res.status(404).json({ message: 'Kurikulum tidak ditemukan.' });
     }
 
-    const nama_kurikulum = kurikulum[0].nama_kurikulum;
-    
-    // Parse the dates
-    const startDate = new Date(tahun_mulai);
-    const endDate = new Date(tahun_berakhir);
-    
-    // Get the years and months
-    const startYear = startDate.getFullYear();
-    const startMonth = startDate.getMonth() + 1; // Months are 0-indexed
-    
-    // Determine academic year and semester
-    let academicYear, semester;
-    
-    if (startMonth >= 8 || startMonth <= 1) {
-      // August-January period (Semester 1 of current academic year)
-      academicYear = startMonth <= 1 ? startYear - 1 : startYear;
-      semester = 1;
-    } else {
-      // February-July period (Semester 2 of previous academic year)
-      academicYear = startYear - 1;
-      semester = 2;
-    }
-    
-    // Generate the ID (academic year + semester)
-    let tahunAkademikId = `${academicYear}${semester}`;
-    
-    // Check if ID already exists
-    const [existing] = await db.query(
-      `SELECT * FROM tahun_akademik WHERE tahun_akademik_id = ?`,
-      [tahunAkademikId]
-    );
-    
-    if (existing.length > 0) {
-      return res.status(400).json({
-        message: 'Tahun akademik untuk semester ini sudah ada',
-        existing_data: existing[0]
-      });
-    }
-
-    // Insert new tahun akademik
+    // 2. Panggil Stored Procedure untuk memasukkan data.
+    // Logika pembuatan ID dan status ditangani sepenuhnya di dalam SP.
     await db.query(
-      `INSERT INTO tahun_akademik 
-       (tahun_akademik_id, kurikulum_id, tahun_mulai, tahun_berakhir, status, created_at)
-       VALUES (?, ?, ?, ?, ?, NOW())`,
-      [tahunAkademikId, kurikulum_id, tahun_mulai, tahun_berakhir, status]
+      `CALL admin_create_tahun_akademik(?, ?, ?)`,
+      [kurikulum_id, tahun_mulai, tahun_berakhir]
+    );
+    
+    // 3. Ambil data yang baru saja dibuat untuk dikirim kembali dalam respons.
+    //    Kita mengambil baris terakhir yang dimasukkan untuk kurikulum ini
+    //    berdasarkan kolom `created_at` untuk memastikan kita mendapatkan data yang benar.
+    const [newData] = await db.query(
+        `SELECT t.*, k.nama_kurikulum 
+         FROM tahun_akademik t 
+         JOIN kurikulum k ON t.kurikulum_id = k.kurikulum_id 
+         WHERE t.kurikulum_id = ?
+         ORDER BY t.created_at DESC
+         LIMIT 1`,
+        [kurikulum_id]
     );
 
+    // 4. Kirim respons sukses beserta data yang baru dibuat
     res.status(201).json({
       message: 'Tahun akademik berhasil ditambahkan.',
-      data: {
-        tahun_akademik_id: tahunAkademikId,
-        kurikulum_id,
-        nama_kurikulum,
-        tahun_mulai,
-        tahun_berakhir,
-        status,
-        academic_year: academicYear,
-        semester: semester
-      }
+      data: newData[0]
     });
 
   } catch (error) {
-    console.error(error);
+    console.error("Error saat menambahkan tahun akademik:", error);
     res.status(500).json({ 
       message: 'Gagal menambahkan tahun akademik.', 
       error: error.message 
@@ -113,80 +79,112 @@ const getAllTahunAkademik = async (req, res) => {
 
 // READ - Ambil Tahun Akademik by ID
 const getTahunAkademikById = async (req, res) => {
-  const { tahun_akademik_id } = req.params;
+  // Ambil tahun_akademik_id dan kurikulum_id dari params
+  const { tahun_akademik_id, kurikulum_id } = req.params;
 
   try {
+    // Panggil Stored Procedure untuk mengambil data.
+    // Stored procedure ini dirancang untuk dapat mencari berdasarkan kedua ID.
     const [rows] = await db.query(
-      `SELECT t.*, k.nama_kurikulum 
-       FROM tahun_akademik t 
-       JOIN kurikulum k ON t.kurikulum_id = k.kurikulum_id 
-       WHERE t.tahun_akademik_id = ?`,
-      [tahun_akademik_id]
+      `CALL sp_read_tahun_akademik(?, ?)`,
+      [tahun_akademik_id, kurikulum_id]
     );
 
-    if (rows.length === 0) return res.status(404).json({ message: 'Tahun akademik tidak ditemukan.' });
+    // Hasil dari stored procedure mungkin dalam bentuk array of arrays jika ada hasil tambahan,
+    // jadi kita perlu mengambil array pertama yang berisi data yang sebenarnya.
+    const data = rows[0]; // Ambil set hasil pertama
 
-    res.status(200).json(rows[0]);
+    if (data.length === 0) return res.status(404).json({ message: 'Tahun akademik tidak ditemukan.' });
+
+    res.status(200).json(data[0]);
   } catch (err) {
-    console.error(err);
+    console.error("Error saat mengambil tahun akademik berdasarkan ID:", err);
     res.status(500).json({ message: 'Gagal mengambil data tahun akademik.' });
   }
 };
-
 // UPDATE - Edit Tahun Akademik
 const updateTahunAkademik = async (req, res) => {
-  const { kurikulum_id, tahun_mulai, tahun_berakhir, status } = req.body;
-  const { tahun_akademik_id } = req.params;
+  const { tahun_mulai, tahun_berakhir, status } = req.body;
+  // Ambil tahun_akademik_id dari params (ini adalah p_ta_id_lama)
+  // Ambil kurikulum_id lama dari params (ini adalah p_kurikulum_id_lama)
+  const { tahun_akademik_id, kurikulum_id: old_kurikulum_id } = req.params;
+  // Ambil kurikulum_id baru dari body (ini adalah p_kurikulum_id)
+  const { kurikulum_id: new_kurikulum_id } = req.body;
 
-  if (!kurikulum_id || !tahun_mulai || !tahun_berakhir || !status) {
-    return res.status(400).json({ message: 'Semua field wajib diisi!' });
+
+  // Validasi input
+  if (!new_kurikulum_id || !tahun_mulai || !tahun_berakhir || !status) {
+    return res.status(400).json({ message: 'Semua field (kurikulum_id, tahun_mulai, tahun_berakhir, status) wajib diisi!' });
   }
 
   try {
-    const [kurikulum] = await db.query(`SELECT * FROM kurikulum WHERE kurikulum_id = ?`, [kurikulum_id]);
+    // 1. Periksa apakah kurikulum baru ada
+    const [kurikulum] = await db.query(`SELECT nama_kurikulum FROM kurikulum WHERE kurikulum_id = ?`, [new_kurikulum_id]);
     if (kurikulum.length === 0) {
-      return res.status(400).json({ message: 'Kurikulum tidak ditemukan.' });
+      return res.status(400).json({ message: 'Kurikulum baru tidak ditemukan.' });
     }
 
-    const nama_kurikulum = kurikulum[0].nama_kurikulum;
-
+    // 2. Panggil Stored Procedure untuk memperbarui data
     await db.query(
-      `UPDATE tahun_akademik 
-       SET kurikulum_id = ?, tahun_mulai = ?, tahun_berakhir = ?, status = ? 
-       WHERE tahun_akademik_id = ?`,
-      [kurikulum_id, tahun_mulai, tahun_berakhir, status, tahun_akademik_id]
+      `CALL admin_update_tahun_akademik(?, ?, ?, ?, ?, ?)`,
+      [
+        tahun_akademik_id,      // p_ta_id_lama
+        old_kurikulum_id,       // p_kurikulum_id_lama (dari params)
+        new_kurikulum_id,       // p_kurikulum_id (baru, dari body)
+        tahun_mulai,            // p_ta_mulai
+        tahun_berakhir,         // p_ta_berakhir
+        status                  // p_ta_status
+      ]
     );
+
+    // 3. Ambil data yang baru saja diperbarui untuk dikirim kembali dalam respons.
+    // Karena stored procedure dapat mengubah tahun_akademik_id, kita perlu mencari
+    // data berdasarkan tahun_mulai, tahun_berakhir, dan kurikulum_id yang baru
+    // atau mengambil baris terakhir yang diperbarui jika ada cara unik lainnya.
+    // Untuk keandalan, kita akan mengambil data yang paling sesuai dengan input baru.
+    const [updatedData] = await db.query(
+        `SELECT t.*, k.nama_kurikulum
+         FROM tahun_akademik t
+         JOIN kurikulum k ON t.kurikulum_id = k.kurikulum_id
+         WHERE t.kurikulum_id = ? AND t.tahun_mulai = ? AND t.tahun_berakhir = ?
+         ORDER BY t.created_at DESC
+         LIMIT 1`, // Mengambil yang paling baru jika ada duplikat berdasarkan kriteria ini
+        [new_kurikulum_id, tahun_mulai, tahun_berakhir]
+    );
+
+    if (updatedData.length === 0) {
+        return res.status(500).json({ message: 'Gagal mengambil data tahun akademik yang diperbarui.' });
+    }
 
     res.status(200).json({
       message: 'Tahun akademik berhasil diperbarui.',
-      data: {
-        tahun_akademik_id,
-        kurikulum_id,
-        nama_kurikulum,
-        tahun_mulai,
-        tahun_berakhir,
-        status
-      }
+      data: updatedData[0]
     });
   } catch (err) {
-    console.error(err);
+    console.error("Error saat memperbarui tahun akademik:", err);
     res.status(500).json({ message: 'Gagal memperbarui tahun akademik.', error: err.message });
   }
 };
 
 // DELETE - Hapus Tahun Akademik
 const hapusTahunAkademik = async (req, res) => {
-  const { tahun_akademik_id } = req.params;
+  // Ambil tahun_akademik_id dan kurikulum_id dari params
+  const { tahun_akademik_id, kurikulum_id } = req.params;
 
   try {
-    const [cek] = await db.query(`SELECT * FROM tahun_akademik WHERE tahun_akademik_id = ?`, [tahun_akademik_id]);
-    if (cek.length === 0) return res.status(404).json({ message: 'Tahun akademik tidak ditemukan.' });
+    // 1. Cek keberadaan tahun akademik sebelum menghapus
+    const [cek] = await db.query(`SELECT * FROM tahun_akademik WHERE tahun_akademik_id = ? AND kurikulum_id = ?`, [tahun_akademik_id, kurikulum_id]);
+    if (cek.length === 0) return res.status(404).json({ message: 'Tahun akademik tidak ditemukan atau tidak cocok dengan kurikulum_id yang diberikan.' });
 
-    await db.query(`DELETE FROM tahun_akademik WHERE tahun_akademik_id = ?`, [tahun_akademik_id]);
+    // 2. Panggil Stored Procedure untuk menghapus data
+    await db.query(
+      `CALL admin_delete_tahun_akademik(?, ?)`,
+      [tahun_akademik_id, kurikulum_id]
+    );
 
     res.status(200).json({ message: 'Tahun akademik berhasil dihapus.' });
   } catch (err) {
-    console.error(err);
+    console.error("Error saat menghapus tahun akademik:", err);
     res.status(500).json({ message: 'Gagal menghapus tahun akademik.', error: err.message });
   }
 };

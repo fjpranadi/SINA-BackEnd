@@ -9,7 +9,8 @@ const {
   hapusJadwal,
   getJadwalByJadwalId,
   getKelasJadwal,
-  hapusJadwalByKelasId
+  hapusJadwalByKelasId,
+  getGuruTersediaByKelas
 } = require('../controller/jadwalController');
 const { verifyAdmin } = require('../controller/authController');
 
@@ -22,5 +23,6 @@ router.put('/admin/jadwal/:jadwal_id',verifyAdmin, updateJadwal);       // Updat
 router.delete('/admin/jadwal/:jadwal_id',verifyAdmin, hapusJadwal);     // Hapus jadwal
 router.get('/admin/kelas-jadwal', verifyAdmin, getKelasJadwal);
 router.delete('/admin/jadwalbykelas/:kelas_id', verifyAdmin,hapusJadwalByKelasId);
+router.get('/admin/guru-tersedia/:kelas_id', verifyAdmin, getGuruTersediaByKelas);
 
 module.exports = router;

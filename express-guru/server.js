@@ -3,7 +3,16 @@ const app = express();
 const cors = require('cors');
 const guruRouter = require('./router/guruRouter');
 const path = require('path');
+const mongoose = require('./config/mongo');
+const jwtDecode = require('./middleware/jwtDecode');
+const logger = require('./middleware/logger');
 require('dotenv').config();
+
+// Pasang JWT decode
+app.use(jwtDecode);
+
+// Pasang logger setelah decode JWT
+app.use(logger);
 
 // Public path untuk akses gambar profile
 app.use('/Upload/profile_image', express.static(path.join(__dirname, 'Upload/profile_image')));

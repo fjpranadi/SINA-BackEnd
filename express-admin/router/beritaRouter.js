@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const {createberita, deleteberita, getAllberita, getberitalById, editberita} = require('../controller/beritaController');
+const {createberita, deleteberita, getAllberita, getberitalById, editberita, getberitalByIdlanding, getAllberitalanding} = require('../controller/beritaController');
 const { verifyAdmin } = require('../controller/authController'); // ganti path jika perlu
 const uploadberita = require('../middleware/uploadberita');
 

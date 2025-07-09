@@ -17,6 +17,41 @@ const containsSQLInjection = (input) => {
   return forbiddenWords.some(word => input.toLowerCase().includes(word));
 };
 
+const validateTingkatKurikulum = async (kurikulum_id, tingkat, jenjang) => {
+  try {
+    // 1. Dapatkan jenjang dari kurikulum
+    const [kurikulumRows] = await db.query(
+      'SELECT jenjang FROM kurikulum WHERE kurikulum_id = ?', 
+      [kurikulum_id]
+    );
+    
+    if (kurikulumRows.length === 0) {
+      throw new Error('Kurikulum tidak ditemukan');
+    }
+    
+    const kurikulumJenjang = kurikulumRows[0].jenjang;
+    
+    // 2. Validasi jenjang kelas sesuai dengan jenjang kurikulum
+    if (kurikulumJenjang !== jenjang) {
+      throw new Error(`Jenjang kelas (${jenjang}) tidak sesuai dengan jenjang kurikulum (${kurikulumJenjang})`);
+    }
+    
+    // 3. Validasi tingkat tersedia di kurikulum_detail
+    const [tingkatRows] = await db.query(
+      'SELECT DISTINCT tingkat FROM kurikulum_detail WHERE kurikulum_id = ? AND tingkat = ?',
+      [kurikulum_id, tingkat]
+    );
+    
+    if (tingkatRows.length === 0) {
+      throw new Error(`Tingkat ${tingkat} tidak tersedia dalam kurikulum ini`);
+    }
+    
+    return true;
+  } catch (error) {
+    throw error;
+  }
+};
+
 // CREATE - Tambah Kelas
 const tambahKelas = async (req, res) => {
   const { tahun_akademik_id, guru_nip, nama_kelas, tingkat, jenjang } = req.body;
@@ -51,6 +86,9 @@ const tambahKelas = async (req, res) => {
     }
 
     const kurikulum_id = tahunAkademikRows[0].kurikulum_id;
+
+    // Validasi tingkat dan jenjang sesuai dengan kurikulum
+    await validateTingkatKurikulum(kurikulum_id, tingkat, jenjang);
 
     // Generate random ID and attempt insertion
     const MAX_ATTEMPTS = 5;
@@ -99,7 +137,7 @@ const tambahKelas = async (req, res) => {
 };
 
 
-// READ - Ambil Semua Kelas
+// RREAD - Ambil Semua Kelas
 const getAllKelas = async (req, res) => {
   try {
     // Panggil stored procedure admin_read_kelas dengan NULL untuk target_kelas_id dan tahun_akademik_id
@@ -115,6 +153,22 @@ const getAllKelas = async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: 'Gagal mengambil data kelas.', error: err.message });
+  }
+};
+
+// READ - Ambil Kelas Aktif
+const getKelasAktif = async (req, res) => {
+  try {
+      // Panggil stored procedure sp_read_kelas_aktif
+      const [rows] = await db.query('CALL sp_read_kelas_aktif()');
+      
+      // rows[0] berisi data dari stored procedure
+      const kelasAktifData = rows[0];
+
+      res.status(200).json(kelasAktifData);
+  } catch (err) {
+      console.error(err);
+      res.status(500).json({ message: 'Gagal mengambil data kelas aktif.', error: err.message });
   }
 };
 
@@ -177,7 +231,16 @@ const updateKelas = async (req, res) => {
       kurikulum_id = tahunAkademikRows[0].kurikulum_id;
     }
 
-    // 4. Validasi guru jika guru_nip diupdate
+    // 4. Validasi tingkat dan jenjang jika diubah
+    if (tingkat !== undefined || jenjang || tahun_akademik_id) {
+      await validateTingkatKurikulum(
+        kurikulum_id, 
+        updateData.tingkat, 
+        updateData.jenjang
+      );
+    }
+
+    // 5. Validasi guru jika guru_nip diupdate
     if (guru_nip && guru_nip !== currentData.guru_nip) {
       const [guruRows] = await db.query('SELECT * FROM guru WHERE nip = ?', [updateData.guru_nip]);
       if (guruRows.length === 0) {
@@ -185,7 +248,7 @@ const updateKelas = async (req, res) => {
       }
     }
 
-    // 5. SQL Injection check hanya untuk field yang diupdate
+    // 6. SQL Injection check hanya untuk field yang diupdate
     const fieldsToCheck = {};
     if (tahun_akademik_id) fieldsToCheck.tahun_akademik_id = updateData.tahun_akademik_id;
     if (guru_nip) fieldsToCheck.guru_nip = updateData.guru_nip;
@@ -199,7 +262,7 @@ const updateKelas = async (req, res) => {
       }
     }
 
-    // 6. Check if any data actually changed
+    // 7. Check if any data actually changed
     const isSameData = 
       updateData.tahun_akademik_id === currentData.tahun_akademik_id &&
       kurikulum_id === currentData.kurikulum_id &&
@@ -215,27 +278,26 @@ const updateKelas = async (req, res) => {
       });
     }
 
-    // 7. Update the class data
-// Pada bagian query UPDATE, hapus updated_at
-await db.query(
-  `UPDATE kelas SET
-    tahun_akademik_id = ?,
-    kurikulum_id = ?,
-    guru_nip = ?,
-    nama_kelas = ?,
-    tingkat = ?,
-    jenjang = ?
-  WHERE kelas_id = ?`,
-  [
-    updateData.tahun_akademik_id,
-    kurikulum_id,
-    updateData.guru_nip,
-    updateData.nama_kelas,
-    updateData.tingkat,
-    updateData.jenjang,
-    kelas_id
-  ]
-);
+    // 8. Update the class data
+    await db.query(
+      `UPDATE kelas SET
+        tahun_akademik_id = ?,
+        kurikulum_id = ?,
+        guru_nip = ?,
+        nama_kelas = ?,
+        tingkat = ?,
+        jenjang = ?
+      WHERE kelas_id = ?`,
+      [
+        updateData.tahun_akademik_id,
+        kurikulum_id,
+        updateData.guru_nip,
+        updateData.nama_kelas,
+        updateData.tingkat,
+        updateData.jenjang,
+        kelas_id
+      ]
+    );
 
     res.status(200).json({ 
       message: 'Data kelas berhasil diupdate.',
@@ -326,6 +388,7 @@ const getSiswaByKelasId = async (req, res) => {
 module.exports = {
   tambahKelas,
   getAllKelas,
+  getKelasAktif,
   getKelasById,
   updateKelas,
   hapusKelas,

@@ -11,8 +11,20 @@ const tahunakademikRouter = require('./router/tahunakademikRouter');
 const jadwalRouter = require('./router/jadwalRouter');
 const adminRouter = require('./router/adminRouter')
 const beritaRouter = require('./router/beritaRouter')
+const beritalandingRouter = require('./router/beritalandingRouter')
 const kurikulumRouter = require('./router/kurikulumRouter')
+const highlightRouter = require('./router/highlightRouter')
+const mongoose = require('./config/mongo');
+const jwtDecode = require('./middleware/jwtDecode');
+const logger = require('./middleware/logger');
+
 require('dotenv').config();
+
+// Pasang JWT decode
+app.use(jwtDecode);
+
+// Pasang logger setelah decode JWT
+app.use(logger);
 
 const generateRandomFilename = (originalName) => {
   const ext = path.extname(originalName); // ambil ekstensi file, misalnya .jpg
@@ -42,11 +54,17 @@ app.use('/api', mapelRouter);
 app.use('/api', guruController);
 app.use('/api', adminRouter);
 app.use('/api', beritaRouter);
+app.use('/api', beritalandingRouter);
 app.use('/api', kurikulumRouter);
 app.use('/api', siswaRouter);
 app.use('/api', kelasRouter);
 app.use('/api', tahunakademikRouter);
 app.use('/api', jadwalRouter);
+app.use('/api', highlightRouter);
+
+
+
+
 
 
 const PORT = process.env.PORT || 3000;

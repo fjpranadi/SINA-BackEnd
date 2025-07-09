@@ -11,8 +11,6 @@ const generateRandomFilename = (originalName) => {
   return `${timestamp}_${randomStr}${ext}`;
 };
 
-
-
 const getAllberita = async (req, res) => {
     try {
         const [rows] = await db.query('SELECT * FROM berita');
@@ -47,6 +45,48 @@ const getberitalById = async (req, res) => {
         };
 
         res.status(200).json(beritaWithUsername);
+    } catch (error) {
+        res.status(500).json({ message: 'Gagal mengambil data berita', error });
+    }
+};
+
+
+
+const getAllberitalanding = async (req, res) => {
+    try {
+        const [rows] = await db.query(`
+            SELECT b.*, 
+                   COALESCE(u.username, ug.username) AS username
+            FROM berita b
+            LEFT JOIN admin a ON b.admin_id = a.admin_id
+            LEFT JOIN user u ON a.user_id = u.user_id
+            LEFT JOIN guru g ON b.guru_nip = g.nip
+            LEFT JOIN user ug ON g.user_id = ug.user_id
+        `);
+
+        res.status(200).json(rows);
+    } catch (error) {
+        res.status(500).json({ message: 'Gagal mengambil data berita', error });
+    }
+};
+
+const getberitalByIdlanding = async (req, res) => {
+    const id = req.params.id;
+    try {
+        const [rows] = await db.query(`
+            SELECT b.*, 
+                   COALESCE(u.username, ug.username) AS username
+            FROM berita b
+            LEFT JOIN admin a ON b.admin_id = a.admin_id
+ LEFT JOIN user u ON a.user_id = u.user_id
+            LEFT JOIN guru g ON b.guru_nip = g.nip
+            LEFT JOIN user ug ON g.user_id = ug.user_id
+            WHERE b.berita_id = ?
+        `, [id]);
+        
+        if (rows.length === 0) return res.status(404).json({ message: 'berita tidak ditemukan' });
+
+        res.status(200).json(rows[0]);
     } catch (error) {
         res.status(500).json({ message: 'Gagal mengambil data berita', error });
     }
@@ -165,5 +205,7 @@ module.exports = {
     deleteberita,
     getAllberita,
     getberitalById,
-    editberita
+    editberita,
+    getAllberitalanding,
+    getberitalByIdlanding
 };

@@ -20,7 +20,10 @@ const {
   getStatistikNilaiSiswa,
   getDetailKelas,
   getDetailRaporSiswa,
-  downloadRaporPdf 
+  downloadRaporPdf,
+  getRiwayatAbsensiSiswa,
+  getRiwayatSuratAbsen,
+  updatePasswordSiswa
 } = require('../controller/dashboardController');
 const uploadtugas = require('../middleware/uploadtugasMiddleware'); 
 const uploadprofile = require('../middleware/uploadProfile'); 
@@ -34,6 +37,8 @@ router.put('/dashboard/biodata', verifyToken,uploadprofile.single('foto_profil')
 router.get('/dashboard/berita', verifyToken, getBerita);
 router.get('/dashboard/berita/:id', verifyToken, getBeritaById);
 router.put('/dashboard/tugas/:tugas_id',verifyToken, uploadtugas.single('file_jawaban'), editTugasSiswa);
+router.put('/dashboard/update-password',verifyToken, updatePasswordSiswa);
+router.get('/dashboard/surat-absen', verifyToken, getRiwayatSuratAbsen);
 
 // Mapel
 router.get('/dashboard/mapel-kelas', verifyToken, getMapelKelas);
@@ -56,6 +61,7 @@ router.get('/dashboard/tugasDetail/:tugas_id', verifyToken, getTugasDetail);
 // Riwayat Absensi
 router.get('/dashboard/absensi', verifyToken, getAbsensi);
 router.get('/dashboard/ringkasan', verifyToken, getRingkasanAbsensi);
+router.get('/dashboard/riwayat', verifyToken, getRiwayatAbsensiSiswa);
 
 // Rapor
 router.get('/dashboard/rapor', verifyToken, getListRapor);

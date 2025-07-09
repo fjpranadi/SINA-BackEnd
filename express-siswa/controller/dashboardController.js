@@ -994,49 +994,58 @@ const getDetailRaporSiswa = async (req, res) => {
       : 0;
 
     // 5. Siapkan data untuk PDF
-    const pdfData = {
-      siswa: {
-        nis: siswa.nis,
-        nisn: siswa.nisn,
-        nama_siswa: siswa.nama_siswa,
-        tempat_lahir: siswa.tempat_lahir,
-        tanggal_lahir: siswa.tanggal_lahir,
-        alamat: siswa.alamat,
-        jenis_kelamin: siswa.jenis_kelamin,
-        agama: siswa.agama,
-        no_telepon: siswa.no_telepon,
-        foto_profil: siswa.foto_profil
-      },
-      kelas: {
-        kelas_id: kelas.kelas_id,
-        nama_kelas: kelas.nama_kelas,
-        tingkat: kelas.tingkat,
-        jenjang: kelas.jenjang,
-        tahun_akademik_id: kelas.tahun_akademik_id,
-        tahun_mulai: kelas.tahun_mulai,
-        tahun_berakhir: kelas.tahun_berakhir,
-        nama_kurikulum: kelas.nama_kurikulum,
-        wali_kelas: kelas.wali_kelas,
-        foto_wali_kelas: kelas.foto_wali_kelas
-      },
-      nilai: nilaiList,
-      statistik: {
-        total_mapel: totalMapel,
-        total_tuntas: totalTuntas,
-        total_belum_tuntas: totalBelumTuntas,
-        total_belum_lengkap: nilaiList.length - totalMapel,
-        rata_rata_pengetahuan: rataRataPengetahuan,
-        rata_rata_keterampilan: rataRataKeterampilan,
-        rata_rata_nilai_akhir: rataRataAkhir
-      },
-      catatan: {
-        tanggal_cetak: new Date().toISOString(),
-        keterangan: 'Rapor ini dicetak secara elektronik dan sah tanpa tanda tangan basah'
-      }
-    };
+  const nilaiUntukPdf = nilaiList.map(nilai => ({
+    nama_mapel: nilai.nama_mapel,
+    pengetahuan: nilai.nilai_pengetahuan,
+    keterampilan: nilai.nilai_keterampilan,
+    kkm: nilai.kkm,
+    status: nilai.status,
+    guru_pengampu: nilai.guru_pengampu
+  }));
 
-    // 6. Generate PDF
-    const pdfResult = await generateRaporPdf(pdfData);
+  const pdfData = {
+    siswa: {
+      nis: siswa.nis,
+      nisn: siswa.nisn,
+      nama_siswa: siswa.nama_siswa,
+      tempat_lahir: siswa.tempat_lahir,
+      tanggal_lahir: siswa.tanggal_lahir,
+      alamat: siswa.alamat,
+      jenis_kelamin: siswa.jenis_kelamin,
+      agama: siswa.agama,
+      no_telepon: siswa.no_telepon,
+      foto_profil: siswa.foto_profil
+    },
+    kelas: {
+      kelas_id: kelas.kelas_id,
+      nama_kelas: kelas.nama_kelas,
+      tingkat: kelas.tingkat,
+      jenjang: kelas.jenjang,
+      tahun_akademik_id: kelas.tahun_akademik_id,
+      tahun_mulai: kelas.tahun_mulai,
+      tahun_berakhir: kelas.tahun_berakhir,
+      nama_kurikulum: kelas.nama_kurikulum,
+      wali_kelas: kelas.wali_kelas,
+      foto_wali_kelas: kelas.foto_wali_kelas
+    },
+    nilai: nilaiUntukPdf, // Gunakan yang sudah dimapping
+    statistik: {
+      total_mapel: totalMapel,
+      total_tuntas: totalTuntas,
+      total_belum_tuntas: totalBelumTuntas,
+      total_belum_lengkap: nilaiList.length - totalMapel,
+      rata_rata_pengetahuan: rataRataPengetahuan,
+      rata_rata_keterampilan: rataRataKeterampilan,
+      rata_rata_nilai_akhir: rataRataAkhir
+    },
+    catatan: {
+      tanggal_cetak: new Date().toISOString(),
+      keterangan: 'Rapor ini dicetak secara elektronik dan sah tanpa tanda tangan basah'
+    }
+  };
+
+  // 6. Generate PDF
+  const pdfResult = await generateRaporPdf(pdfData);
 
     // 7. Response
     res.status(200).json({
@@ -1072,5 +1081,221 @@ const downloadRaporPdf = async (req, res) => {
   }
 };
 
-module.exports = {getBiodataSiswa, getJadwalSiswa, editDataDiriSiswa, getBerita, getMateriSiswa, getTugasSiswa, editTugasSiswa, getBeritaById, getDashboardRingkasanSiswa, getJadwalSiswabyhari, getMateriHariIni, getStatistikNilaiSiswa, getDetailKelas, getDetailRaporSiswa, downloadRaporPdf  };
+const getRiwayatAbsensiSiswa = async (req, res) => {
+  const userId = req.user.userId;
+
+  try {
+    // 1. Ambil NIS siswa dari user ID
+    const [[siswa]] = await db.query('SELECT nis FROM siswa WHERE user_id = ?', [userId]);
+    if (!siswa) {
+      return res.status(404).json({ message: 'Data siswa tidak ditemukan' });
+    }
+
+    // 2. Ambil semua KRS siswa
+    const [krsList] = await db.query('SELECT krs_id FROM krs WHERE siswa_nis = ?', [siswa.nis]);
+    if (krsList.length === 0) {
+      return res.status(404).json({ message: 'Tidak ada data KRS untuk siswa ini' });
+    }
+
+    // 3. Ambil riwayat absensi (kecuali yang hadir)
+    const [absensiList] = await db.query(`
+      SELECT 
+        a.absensi_id,
+        CASE 
+          WHEN a.keterangan = 'a' THEN 'Alpha'
+          WHEN a.keterangan = 'i' THEN 'Izin'
+          WHEN a.keterangan = 's' THEN 'Sakit'
+          ELSE 'Tidak Hadir'
+        END AS keterangan,
+        DATE_FORMAT(a.tanggal, '%d/%m/%Y') AS tanggal,
+        a.uraian,
+        a.surat,
+        m.nama_mapel,
+        j.hari,
+        g.nama_guru
+      FROM absensi a
+      LEFT JOIN jadwal j ON a.jadwal_id = j.jadwal_id
+      LEFT JOIN mapel m ON j.mapel_id = m.mapel_id
+      LEFT JOIN guru g ON a.guru_nip = g.nip
+      WHERE a.krs_id IN (?)
+        AND a.keterangan != 'h'
+      ORDER BY a.tanggal DESC
+    `, [krsList.map(krs => krs.krs_id)]);
+
+    // Format response
+    const formattedAbsensi = absensiList.map(absensi => ({
+      id: absensi.absensi_id,
+      keterangan: absensi.keterangan,
+      tanggal: absensi.tanggal,
+      mata_pelajaran: absensi.nama_mapel,
+      hari: absensi.hari,
+      guru: absensi.nama_guru,
+      alasan: absensi.uraian,
+      surat_izin: absensi.surat 
+    }));
+
+    res.status(200).json({
+      message: 'Riwayat absensi berhasil diambil',
+      status: 200,
+      data: formattedAbsensi
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      message: 'Gagal mengambil riwayat absensi',
+      error: err.message
+    });
+  }
+};
+
+const getRiwayatSuratAbsen = async (req, res) => {
+  const userId = req.user.userId;
+
+  try {
+    // 1. Ambil NIS siswa dari user ID
+    const [[siswa]] = await db.query('SELECT nis FROM siswa WHERE user_id = ?', [userId]);
+    if (!siswa) {
+      return res.status(404).json({ message: 'Data siswa tidak ditemukan' });
+    }
+
+    // 2. Ambil semua KRS siswa
+    const [krsList] = await db.query('SELECT krs_id FROM krs WHERE siswa_nis = ?', [siswa.nis]);
+    if (krsList.length === 0) {
+      return res.status(404).json({ message: 'Tidak ada data KRS untuk siswa ini' });
+    }
+
+    // 3. Ambil riwayat surat absen (kecuali yang hadir)
+    const [suratAbsenList] = await db.query(`
+      SELECT 
+        a.absensi_id,
+        CASE 
+          WHEN a.keterangan = 'a' THEN 'Alpha'
+          WHEN a.keterangan = 'i' THEN 'Izin'
+          WHEN a.keterangan = 's' THEN 'Sakit'
+          ELSE 'Tidak Hadir'
+        END AS keterangan,
+        DATE_FORMAT(a.tanggal, '%d/%m/%Y') AS tanggal,
+        a.uraian,
+        a.surat,
+        CASE 
+          WHEN a.status_surat = 'terima' THEN 'Diterima'
+          WHEN a.status_surat = 'tolak' THEN 'Ditolak'
+          WHEN a.status_surat = 'menunggu' THEN 'Menunggu'
+          ELSE a.status_surat
+        END AS status_surat,
+        m.nama_mapel,
+        j.hari,
+        g.nama_guru,
+        DATE_FORMAT(a.created_at, '%d/%m/%Y %H:%i') AS diajukan_pada
+      FROM absensi a
+      LEFT JOIN jadwal j ON a.jadwal_id = j.jadwal_id
+      LEFT JOIN mapel m ON j.mapel_id = m.mapel_id
+      LEFT JOIN guru g ON a.guru_nip = g.nip
+      WHERE a.krs_id IN (?)
+        AND a.keterangan != 'h'
+        AND a.surat IS NOT NULL
+      ORDER BY a.tanggal DESC
+    `, [krsList.map(krs => krs.krs_id)]);
+
+    // Format response
+    const formattedSuratAbsen = suratAbsenList.map(surat => ({
+      id: surat.absensi_id,
+      keterangan: surat.keterangan,
+      tanggal: surat.tanggal,
+      mata_pelajaran: surat.nama_mapel,
+      hari: surat.hari,
+      guru: surat.nama_guru,
+      alasan: surat.uraian,
+      nama_file: surat.surat,
+      status: surat.status_surat,
+      diajukan_pada: surat.diajukan_pada,
+      file_surat: surat.surat
+    }));
+
+    res.status(200).json({
+      message: 'Riwayat surat absen berhasil diambil',
+      status: 200,
+      data: formattedSuratAbsen
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      message: 'Gagal mengambil riwayat surat absen',
+      error: err.message
+    });
+  }
+};
+
+const updatePasswordSiswa = async (req, res) => {
+  const userId = req.user.userId;
+  const { password_lama, password_baru, konfirmasi_password } = req.body;
+
+  try {
+    // 1. Validasi input
+    if (!password_lama || !password_baru || !konfirmasi_password) {
+      return res.status(400).json({ 
+        message: 'Password lama, baru, dan konfirmasi harus diisi' 
+      });
+    }
+
+    if (password_baru !== konfirmasi_password) {
+      return res.status(400).json({ 
+        message: 'Password baru dan konfirmasi tidak cocok' 
+      });
+    }
+
+    // 2. Ambil data user dan siswa
+    const [[user]] = await db.query('SELECT * FROM user WHERE user_id = ?', [userId]);
+    if (!user) {
+      return res.status(404).json({ message: 'User tidak ditemukan' });
+    }
+
+    const [[siswa]] = await db.query('SELECT * FROM siswa WHERE user_id = ?', [userId]);
+    if (!siswa) {
+      return res.status(404).json({ message: 'Data siswa tidak ditemukan' });
+    }
+
+    // 3. Verifikasi password lama
+    let passwordValid = false;
+    
+    // Case 1: Password is plaintext (stored in siswa.token)
+    if (siswa.token === password_lama) {
+      passwordValid = true;
+    }
+    // Case 2: Password is hashed (bcrypt comparison)
+    else if (user.password.startsWith('$2b$') || user.password.startsWith('$2a$') || user.password.startsWith('$2y$')) {
+      passwordValid = await bcrypt.compare(password_lama, user.password);
+    }
+
+    if (!passwordValid) {
+      return res.status(401).json({ 
+        message: 'Password lama tidak valid' 
+      });
+    }
+
+    // 4. Hash password baru
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password_baru, salt);
+
+    // 5. Update password di tabel user (hashed) dan siswa (plaintext di token)
+    await db.query('UPDATE user SET password = ? WHERE user_id = ?', [hashedPassword, userId]);
+    await db.query('UPDATE siswa SET token = ? WHERE user_id = ?', [password_baru, userId]);
+
+    res.status(200).json({
+      message: 'Password berhasil diperbarui',
+      status: 200
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      message: 'Gagal memperbarui password',
+      error: err.message
+    });
+  }
+};
+
+module.exports = {getBiodataSiswa, updatePasswordSiswa, getRiwayatSuratAbsen, getJadwalSiswa, editDataDiriSiswa, getBerita, getMateriSiswa, getTugasSiswa, editTugasSiswa, getBeritaById, getDashboardRingkasanSiswa, getJadwalSiswabyhari, getMateriHariIni, getStatistikNilaiSiswa, getDetailKelas, getDetailRaporSiswa, downloadRaporPdf, getRiwayatAbsensiSiswa  };
 

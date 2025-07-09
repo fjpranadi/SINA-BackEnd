@@ -1,4 +1,4 @@
-const express = require('express');
+  const express = require('express');
 const router = express.Router();
 const { verifyToken } = require('../controller/authController');
 const {
@@ -25,10 +25,12 @@ createBeritaGuru,
 getSiswaPengumpulanTugas,
 beriNilaiTugasSiswa,
 getAbsensiByJadwal,
-getRingkasanDashboardGuru,
 getSuratIzinSakit,
 setujuiSuratIzin,
-tolakSuratIzin 
+tolakSuratIzin,
+getTahunAkademik,
+getDetailTugas,
+getDetailMateri
 } = require('../controller/dashboardController');
 const { getJadwalKelas } = require('../controller/jadwalController');
 const { getProfileGuru, updateProfileGuru, updatePasswordGuru } = require('../controller/profileController');
@@ -42,12 +44,17 @@ const {
   inputNilaiRaporGuru,
   getStatistikNilaiBySiswaAndTahun
 } = require('../controller/raportsiswaController');
+const uploadprofile = require('../middleware/uploadProfile');
 
 // Dashboard
-router.get('/dashboard/', verifyToken, getdashboard);
+router.get('/dashboard/count/', verifyToken, getdashboard);
 router.get('/dashboard/jadwal/', verifyToken, getJadwalGuru);
 router.get('/dashboard/siswa/:mapel_id', verifyToken, getSiswaByKelasGuru);
 router.get('/dashboard/mapel/', verifyToken, getMapelGuru);
+
+//detail materi n tugas
+router.get('/dashboard/tugas/detail/:tugas_id', verifyToken, getDetailTugas);
+router.get('/dashboard/materi/detail/:materi_id', verifyToken, getDetailMateri);
 
 // API for tugas
 router.post('/dashboard/tugas/:mapel_id/', verifyToken, uploadlampirantugas.single('lampiran'), createTugasForSiswa);
@@ -62,13 +69,11 @@ router.delete('/dashboard/materi/:materi_id', verifyToken, deleteMateriById);
 
 // Add this to your router file
 router.get('/dashboard/mapel/:mapel_id/tugas/:tugas_id', verifyToken, getSiswaPengumpulanTugas );
-router.get('/dashboard/mapel/:mapel_id/tugas/:tugas_id/siswa/:krs_id/', verifyToken, beriNilaiTugasSiswa );
+router.put('/dashboard/mapel/:mapel_id/tugas/:tugas_id/siswa/:krs_id/', verifyToken, beriNilaiTugasSiswa );
 
 
 router.get('/dashboard/absensi/:jadwal_id', verifyToken, getAbsensiByJadwal);
 router.post('/dashboard/absensi/:jadwal_id', verifyToken, createAbsensiSiswa);
-router.get('/dashboard/ringkasan', verifyToken, getRingkasanDashboardGuru);
-
 
 router.get('/dashboard/berita', verifyToken, getBerita);
 router.get('/dashboard/berita/:id', verifyToken, getBeritaById);
@@ -85,10 +90,13 @@ router.get('/dashboard/tugas/detail/:tugas_id', verifyToken, getTugasDetailById)
 // Get material details
 router.get('/dashboard/materi/detail/:materi_id', verifyToken, getMateriDetailById);
 
+// Get tahunakademik
+router.get('/dashboard/gettahunakademik', verifyToken, getTahunAkademik);
+
 
 // Profile
 router.get('/dashboard/profile', verifyToken, getProfileGuru);
-router.put('/dashboard/profile', verifyToken, updateProfileGuru);
+router.put('/dashboard/profile', verifyToken, uploadprofile.single('foto_profil'), updateProfileGuru);
 router.put('/dashboard/profile/password', verifyToken, updatePasswordGuru);
 
 

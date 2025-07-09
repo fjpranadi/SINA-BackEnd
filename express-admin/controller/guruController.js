@@ -3,6 +3,8 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const JWT_SECRET = 'token-jwt';
 const crypto = require('crypto');
+const nodemailer = require('nodemailer');
+const transporter = require('../config/emailConfig');
 
 
 // Helper untuk deteksi kata berbahaya
@@ -233,13 +235,218 @@ const updateGuru = async (req, res) => {
   }
 };
 
+const getRekapAbsenGuru = async (req, res) => {
+  const { tahun_akademik_id } = req.params;
+
+  if (!tahun_akademik_id) {
+      return res.status(400).json({ message: 'ID Tahun Akademik diperlukan.' });
+  }
+
+  try {
+      // Memanggil stored procedure `sp_read_absen_guru` dengan parameter
+      const [rows] = await db.query(
+          'CALL sp_read_absen_guru(?)', 
+          [tahun_akademik_id]
+      );
+
+      // Hasil dari stored procedure biasanya berada di indeks pertama dari array hasil
+      res.status(200).json(rows[0]);
+  } catch (err) {
+      console.error(err);
+      res.status(500).json({ message: 'Gagal mengambil data rekap absensi guru.' });
+  }
+};
+
+// Fungsi untuk mengirim email login guru
+const sendGuruLoginEmail = async (email, username, password, nip, namaGuru) => {
+  const mailOptions = {
+    from: `"SINA Sekolah" <${process.env.EMAIL_FROM}>`,
+    to: email,
+    subject: 'Informasi Login Guru',
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #2c3e50;">Informasi Akun Guru</h2>
+        <p>Yth. Bapak/Ibu Guru <strong>${namaGuru}</strong>,</p>
+        
+        <p>Berikut adalah informasi login Anda untuk mengakses sistem SINA:</p>
+        
+        <div style="background: #f5f5f5; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
+          <table style="width: 100%;">
+            <tr>
+              <td style="width: 120px;"><strong>NIP</strong></td>
+              <td>${nip}</td>
+            </tr>
+            <tr>
+              <td><strong>Nama</strong></td>
+              <td>${namaGuru}</td>
+            </tr>
+            <tr>
+              <td><strong>Username</strong></td>
+              <td>${username}</td>
+            </tr>
+            <tr>
+              <td><strong>Email</strong></td>
+              <td>${email}</td>
+            </tr>
+            <tr>
+              <td><strong>Password</strong></td>
+              <td>${password}</td>
+            </tr>
+          </table>
+        </div>
+        
+        <p style="margin-top: 20px;">
+          <a href="${process.env.GURU_LOGIN_URL}" 
+             style="background: #3498db; color: white; padding: 10px 15px; 
+                    text-decoration: none; border-radius: 5px;">
+            Login Sekarang
+          </a>
+        </p>
+        
+        <p style="font-size: 12px; color: #7f8c8d; margin-top: 30px;">
+          Harap simpan informasi ini dengan aman dan jangan berikan kepada siapapun.
+          <br>Untuk keamanan, disarankan untuk segera mengganti password setelah login pertama.
+        </p>
+      </div>
+    `
+  };
+
+  await transporter.sendMail(mailOptions);
+};
+
+// Kirim email ke semua guru
+const sendEmailToAllGuru = async (req, res) => {
+  try {
+    // Ambil semua data guru
+    const [gurus] = await db.query(
+      `SELECT g.nip, g.nama_guru, g.token, u.email, u.username 
+       FROM guru g
+       JOIN user u ON g.user_id = u.user_id
+       WHERE u.role = 'guru'`
+    );
+
+    // Kirim email ke setiap guru
+    for (const guru of gurus) {
+      // Jika token kosong, buat password baru
+      if (!guru.token) {
+        const newPassword = generateRandomPassword();
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
+        
+        // Update password di user dan token di guru
+        await db.query('BEGIN');
+        
+        await db.query(
+          'UPDATE user SET password = ? WHERE email = ?',
+          [hashedPassword, guru.email]
+        );
+        
+        await db.query(
+          'UPDATE guru SET token = ? WHERE nip = ?',
+          [newPassword, guru.nip]
+        );
+        
+        await db.query('COMMIT');
+        
+        // Kirim email dengan password baru
+        await sendGuruLoginEmail(guru.email, guru.username, newPassword, guru.nip, guru.nama_guru);
+      } else {
+        // Gunakan token yang sudah ada sebagai password plaintext
+        await sendGuruLoginEmail(guru.email, guru.username, guru.token, guru.nip, guru.nama_guru);
+      }
+    }
+
+    res.status(200).json({ 
+      success: true,
+      message: 'Email informasi login telah dikirim ke semua guru'
+    });
+  } catch (error) {
+    await db.query('ROLLBACK');
+    console.error('Error sendEmailToAllGuru:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Gagal mengirim email ke guru',
+      error: error.message 
+    });
+  }
+};
+
+// Kirim email ke guru tertentu
+const sendEmailToGuruByNip = async (req, res) => {
+  const { nip } = req.params;
+
+  try {
+    // Ambil data guru
+    const [guruRows] = await db.query(
+      `SELECT g.nip, g.nama_guru, g.token, u.email, u.username 
+       FROM guru g
+       JOIN user u ON g.user_id = u.user_id
+       WHERE g.nip = ? AND u.role = 'guru'`,
+      [nip]
+    );
+
+    if (guruRows.length === 0) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Guru tidak ditemukan' 
+      });
+    }
+
+    const guru = guruRows[0];
+    let passwordToSend = guru.token;
+
+    // Jika token kosong, buat password baru
+    if (!guru.token) {
+      const newPassword = generateRandomPassword();
+      const hashedPassword = await bcrypt.hash(newPassword, 10);
+      
+      // Update password di user dan token di guru
+      await db.query('BEGIN');
+      
+      await db.query(
+        'UPDATE user SET password = ? WHERE email = ?',
+        [hashedPassword, guru.email]
+      );
+      
+      await db.query(
+        'UPDATE guru SET token = ? WHERE nip = ?',
+        [newPassword, guru.nip]
+      );
+      
+      await db.query('COMMIT');
+      
+      passwordToSend = newPassword;
+    }
+
+    // Kirim email
+    await sendGuruLoginEmail(guru.email, guru.username, passwordToSend, guru.nip, guru.nama_guru);
+
+    res.status(200).json({ 
+      success: true,
+      message: 'Email informasi login telah dikirim',
+      data: {
+        nip: guru.nip,
+        nama_guru: guru.nama_guru,
+        email: guru.email
+      }
+    });
+  } catch (error) {
+    await db.query('ROLLBACK');
+    console.error('Error sendEmailToGuruByNip:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Gagal mengirim email',
+      error: error.message 
+    });
+  }
+};
+
 module.exports = {
   createGuru,
   deleteGuru,
   getAllGuru,
   getGuruByNip,
-  updateGuru // <- tambahkan ini
+  updateGuru,
+  getRekapAbsenGuru,
+  sendEmailToAllGuru,
+  sendEmailToGuruByNip
 };
-
-
-module.exports = { createGuru,deleteGuru,getAllGuru,getGuruByNip, updateGuru };

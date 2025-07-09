@@ -27,6 +27,18 @@ const createMapel = async (req, res) => {
     const { nama_mapel, kkm } = req.body;
     
     try {
+        // Validasi: Cek apakah nama mapel sudah ada
+        const [existingMapel] = await db.query(
+            'SELECT * FROM mapel WHERE nama_mapel = ?', 
+            [nama_mapel]
+        );
+        
+        if (existingMapel.length > 0) {
+            return res.status(400).json({ 
+                message: 'Nama mapel sudah ada, gunakan nama yang berbeda' 
+            });
+        }
+
         // Fungsi untuk generate BIGINT random yang unik
         const generateUniqueBigIntId = async () => {
             let isUnique = false;
@@ -76,15 +88,43 @@ const createMapel = async (req, res) => {
 const updateMapel = async (req, res) => {
     const id = req.params.id;
     const { nama_mapel, kkm } = req.body;
+    
     try {
+        // Validasi 1: Cek apakah mapel dengan ID tersebut ada
+        const [existingById] = await db.query(
+            'SELECT * FROM mapel WHERE mapel_id = ?',
+            [id]
+        );
+        
+        if (existingById.length === 0) {
+            return res.status(404).json({ message: 'Mapel tidak ditemukan' });
+        }
+
+        // Validasi 2: Cek apakah nama mapel sudah digunakan oleh mapel lain
+        const [existingByName] = await db.query(
+            'SELECT * FROM mapel WHERE nama_mapel = ? AND mapel_id != ?',
+            [nama_mapel, id]
+        );
+        
+        if (existingByName.length > 0) {
+            return res.status(400).json({ 
+                message: 'Nama mapel sudah digunakan oleh mapel lain' 
+            });
+        }
+
+        // Jika validasi lolos, lakukan update
         const [result] = await db.query(
             'UPDATE mapel SET nama_mapel = ?, kkm = ? WHERE mapel_id = ?',
             [nama_mapel, kkm, id]
         );
-        if (result.affectedRows === 0) return res.status(404).json({ message: 'Mapel tidak ditemukan' });
+        
         res.status(200).json({ message: 'Mapel berhasil diperbarui' });
     } catch (error) {
-        res.status(500).json({ message: 'Gagal memperbarui mapel', error });
+        console.error('Error updating mapel:', error);
+        res.status(500).json({ 
+            message: 'Gagal memperbarui mapel', 
+            error: error.message 
+        });
     }
 };
 

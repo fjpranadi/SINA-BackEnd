@@ -4,7 +4,17 @@ const app = express();
 const cors = require('cors');
 const siswaRouter = require('./router/siswaRouter');
 const path = require('path');
+const mongoose = require('./config/mongo');
+const jwtDecode = require('./middleware/jwtDecode');
+const logger = require('./middleware/logger');
+
 require('dotenv').config();
+
+// Pasang JWT decode
+app.use(jwtDecode);
+
+// Pasang logger setelah decode JWT
+app.use(logger);
 
 
 // Public path untuk akses gambar profile
