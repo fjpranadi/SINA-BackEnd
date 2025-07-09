@@ -1257,6 +1257,7 @@ const getMateriDetailById = async (req, res) => {
   }
 };
 
+//lihat siswa yang sudah di absensi oleh guru
 const getAbsensiByJadwal = async (req, res) => {
   const userId = req.user.userId;
   const { jadwal_id } = req.params;
@@ -1303,6 +1304,22 @@ const getAbsensiByJadwal = async (req, res) => {
       ORDER BY tanggal DESC
     `, [jadwal_id]);
 
+    // Cek apakah sudah absen hari ini
+    const [[absenHariIni]] = await db.query(`
+      SELECT COUNT(*) AS total FROM absensi
+      WHERE jadwal_id = ? AND guru_nip = ? AND DATE(tanggal) = CURDATE()
+    `, [jadwal_id, guru_nip]);
+
+    const sudah_absensi = absenHariIni.total > 0;
+
+
+    res.status(200).json({
+      success: true,
+      sudah_absensi,
+      tanggal: new Date().toISOString().split('T')[0],
+      data: absensiList
+    });
+
     res.status(200).json({
       success: true,
       data: absensiList
@@ -1318,6 +1335,7 @@ const getAbsensiByJadwal = async (req, res) => {
   }
 };
 
+// tambah absensi
 const createAbsensiSiswa = async (req, res) => {
   const userId = req.user.userId;
   const { jadwal_id } = req.params;
@@ -1332,7 +1350,7 @@ const createAbsensiSiswa = async (req, res) => {
     }
     const guru_nip = guru.nip;
 
-    // Validasi apakah guru memang mengajar jadwal ini
+    // Validasi apakah guru mengajar pada jadwal ini
     const [[jadwal]] = await db.query(`
       SELECT j.*
       FROM jadwal j
@@ -1349,53 +1367,47 @@ const createAbsensiSiswa = async (req, res) => {
       });
     }
 
-    // Cek dan siapkan data absensi (hindari duplikat)
-    const absensiRecords = [];
-
+    let jumlahDicatat = 0;
     for (const item of absensiData) {
       const [existing] = await db.query(`
         SELECT 1 FROM absensi 
         WHERE jadwal_id = ? AND krs_id = ? AND DATE(tanggal) = CURDATE()
       `, [jadwal_id, item.krs_id]);
 
-      if (existing.length > 0) {
-        continue; // skip jika sudah absen hari ini
-      }
-
-      absensiRecords.push([
-        uuidv4(),
-        jadwal_id,
-        item.krs_id,
-        guru_nip,
-        item.keterangan,
-        tanggal,
-        item.uraian || '',
-        null, // surat
-        new Date()
-      ]);
-    }
-
-    // Insert absensi jika ada data valid
-    if (absensiRecords.length > 0) {
-      await db.query(`
-        INSERT INTO absensi (
-          absensi_id,
+      if (existing.length === 0) {
+        await db.query(`
+          INSERT INTO absensi (
+            absensi_id,
+            jadwal_id,
+            krs_id,
+            guru_nip,
+            keterangan,
+            tanggal,
+            uraian,
+            surat,
+            created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, [
+          uuidv4(),
           jadwal_id,
-          krs_id,
+          item.krs_id,
           guru_nip,
-          keterangan,
+          item.keterangan,
           tanggal,
-          uraian,
-          surat,
-          created_at
-        ) VALUES ?
-      `, [absensiRecords]);
+          item.uraian || '',
+          null,
+          new Date()
+        ]);
+        jumlahDicatat++;
+      }
     }
 
     res.status(201).json({
       success: true,
-      message: 'Absensi berhasil dicatat',
-      jumlah_dicatat: absensiRecords.length
+      message: jumlahDicatat > 0
+        ? 'Absensi berhasil dicatat'
+        : 'Siswa sudah diabsen hari ini',
+      jumlah_dicatat: jumlahDicatat
     });
 
   } catch (error) {

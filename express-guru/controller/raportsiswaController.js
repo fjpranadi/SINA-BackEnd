@@ -7,20 +7,34 @@ const JWT_SECRET = 'token-jwt';
 const getMapelByGuru = async (req, res) => {
   const userId = req.user.userId;
   try {
+    // Ambil NIP guru
     const [[guru]] = await db.query('SELECT nip FROM guru WHERE user_id = ?', [userId]);
     if (!guru) return res.status(404).json({ message: 'Guru tidak ditemukan' });
+    const guruNip = guru.nip;
 
-    const [mapel] = await db.query(`
-      SELECT DISTINCT kd.mapel_id, m.nama_mapel
+    // Ambil data gabungan mapel, kelas, jumlah tugas+materi, jumlah siswa
+    const [rows] = await db.query(`
+      SELECT 
+        kd.mapel_id,
+        m.nama_mapel,
+        k.kelas_id,
+        kl.nama_kelas,
+        COUNT(DISTINCT k.siswa_nis) AS jumlah_siswa,
+        COUNT(DISTINCT kdm.kdm_id) AS total_materi_dan_tugas
       FROM krs_detail kd
       JOIN mapel m ON kd.mapel_id = m.mapel_id
+      JOIN krs k ON kd.krs_id = k.krs_id
+      JOIN kelas kl ON k.kelas_id = kl.kelas_id
+      LEFT JOIN krs_detail_materi kdm 
+        ON kdm.krs_id = kd.krs_id AND kdm.mapel_id = kd.mapel_id
       WHERE kd.guru_nip = ?
-    `, [guru.nip]);
+      GROUP BY kd.mapel_id, m.nama_mapel, k.kelas_id, kl.nama_kelas
+    `, [guruNip]);
 
-    res.json({ success: true, data: mapel });
+    res.json({ success: true, data: rows });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'Gagal mengambil data mapel', error: err.message });
+    console.error('getMapelWithKelasByGuru error:', err);
+    res.status(500).json({ message: 'Gagal mengambil data mapel dan kelas', error: err.message });
   }
 };
 
