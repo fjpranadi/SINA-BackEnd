@@ -315,74 +315,80 @@ const getDetailSuratIzin = async (req, res) => {
 
 // controller/dashboardController.js
 const submitSuratIzin = async (req, res) => {
-  const userId = req.user.userId; // ID orang tua dari JWT
-  const { nis, keterangan, uraian, tanggal_absensi } = req.body;
-  const suratFile = req.file; // File surat yang diupload
+  const userId = req.user.userId;
+  const { nis, keterangan, uraian, tanggal_absensi, password } = req.body;
+  const suratFile = req.file;
 
-  // Validasi input
-  if (!nis || !keterangan || !uraian || !tanggal_absensi) {
+  if (!nis || !keterangan || !uraian || !tanggal_absensi || !password) {
     return res.status(400).json({ 
-      message: 'Semua field harus diisi (nis, keterangan, uraian, tanggal_absensi)' 
+      message: 'Semua field wajib diisi (termasuk password)' 
     });
   }
 
   if (!['i', 's'].includes(keterangan)) {
-    return res.status(400).json({ 
-      message: 'Keterangan harus "i" (izin) atau "s" (sakit)' 
-    });
+    return res.status(400).json({ message: 'Keterangan harus "i" (izin) atau "s" (sakit)' });
   }
 
   try {
-    // 1. Verifikasi bahwa siswa tersebut adalah anak dari orang tua yang login
-    const [ortuData] = await db.query(
-      `SELECT o.nik 
-       FROM ortu o
-       JOIN siswa_ortu so ON o.nik = so.nik
-       WHERE o.user_id = ? AND so.nis = ?`,
-      [userId, nis]
-    );
+    // 1. Verifikasi ortu
+    const [ortuResult] = await db.query('CALL ortu_profile(?)', [userId]);
+    const ortu = ortuResult[0]?.[0];
 
-    if (ortuData.length === 0) {
-      return res.status(403).json({ 
-        message: 'Anda tidak memiliki akses ke siswa ini atau data tidak ditemukan' 
-      });
+    if (!ortu || !ortu.nik) {
+      return res.status(403).json({ message: 'Data orang tua tidak ditemukan' });
     }
 
-    // 2. Cari KRS siswa untuk tahun ajaran saat ini
-    const [krsData] = await db.query(
-      `SELECT k.krs_id 
-       FROM krs k
-       WHERE k.siswa_nis = ? 
-       ORDER BY k.created_at DESC LIMIT 1`,
-      [nis]
-    );
-
-    if (krsData.length === 0) {
-      return res.status(404).json({ 
-        message: 'Data KRS siswa tidak ditemukan' 
-      });
+    const [anakList] = await db.query('CALL sp_read_siswa_ortu_by_nik(?)', [ortu.nik]);
+    const anak = anakList[0]?.find(a => a.nis === nis);
+    if (!anak) {
+      return res.status(403).json({ message: 'Siswa tidak ditemukan atau tidak terhubung dengan ortu ini' });
     }
 
-    const krs_id = krsData[0].krs_id;
+    // 2. Validasi password
+    const [pwResult] = await db.query('CALL sp_read_password(?)', [userId]);
+    const user = pwResult[0]?.[0];
 
-    // 3. Buat data absensi dengan status surat "menunggu"
+    if (!user || !user.password) {
+      return res.status(403).json({ message: 'Password pengguna tidak ditemukan' });
+    }
+
+    const dbPassword = user.password;
+    const isHashed = dbPassword.startsWith('$2b$');
+
+    let isValidPassword = false;
+    if (isHashed) {
+      isValidPassword = await bcrypt.compare(password, dbPassword);
+    } else {
+      isValidPassword = password === dbPassword;
+    }
+
+    if (!isValidPassword) {
+      return res.status(403).json({ message: 'Password tidak sesuai' });
+    }
+
+    // 3. Ambil KRS
+    const [krsData] = await db.query('CALL sp_get_siswa_current_krs(?)', [nis]);
+    const krs_id = krsData[0]?.[0]?.krs_id;
+
+    if (!krs_id) {
+      return res.status(404).json({ message: 'KRS siswa tidak ditemukan' });
+    }
+
     const absensi_id = `abs-${Date.now()}`;
     const created_at = new Date();
 
-    await db.query(
-      `INSERT INTO absensi 
-       (absensi_id, krs_id, keterangan, tanggal, uraian, surat, status_surat, created_at) 
-       VALUES (?, ?, ?, ?, ?, ?, 'menunggu', ?)`,
-      [
-        absensi_id,
-        krs_id,
-        keterangan,
-        tanggal_absensi,
-        uraian,
-        suratFile ? suratFile.filename : null,
-        created_at
-      ]
-    );
+    await db.query(`
+      INSERT INTO absensi (absensi_id, krs_id, keterangan, tanggal, uraian, surat, status_surat, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'menunggu', ?)
+    `, [
+      absensi_id,
+      krs_id,
+      keterangan,
+      tanggal_absensi,
+      uraian,
+      suratFile ? suratFile.filename : null,
+      created_at
+    ]);
 
     return res.status(201).json({
       message: 'Surat izin berhasil diajukan',
@@ -390,24 +396,25 @@ const submitSuratIzin = async (req, res) => {
         absensi_id,
         tanggal: tanggal_absensi,
         keterangan,
-        status_surat: 'menunggu'
+        status_surat: 'menunggu',
+        file_surat: suratFile ? `/Upload/surat/${suratFile.filename}` : null
       }
     });
 
-  } catch (error) {
-    console.error('Error saat mengajukan surat izin:', error);
-    
-    // Hapus file yang sudah diupload jika terjadi error
+  } catch (err) {
+    console.error('Error saat mengajukan surat izin:', err);
+
     if (suratFile && fs.existsSync(suratFile.path)) {
       fs.unlinkSync(suratFile.path);
     }
-    
-    return res.status(500).json({ 
-      message: 'Terjadi kesalahan server',
-      error: error.message 
+
+    return res.status(500).json({
+      message: 'Terjadi kesalahan saat mengajukan surat izin',
+      error: err.message
     });
   }
 };
+
 
 const getDashboardCountOrtu = async (req, res) => {
   const userId = req.user.userId; // ID orang tua dari JWT
