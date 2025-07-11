@@ -1352,8 +1352,7 @@ const createAbsensiSiswa = async (req, res) => {
 
     // Validasi apakah guru mengajar pada jadwal ini
     const [[jadwal]] = await db.query(`
-      SELECT j.*
-      FROM jadwal j
+      SELECT j.* FROM jadwal j
       JOIN krs_detail kd ON kd.mapel_id = j.mapel_id
       JOIN krs k ON kd.krs_id = k.krs_id AND k.kelas_id = j.kelas_id
       WHERE j.jadwal_id = ? AND kd.guru_nip = ?
@@ -1368,57 +1367,76 @@ const createAbsensiSiswa = async (req, res) => {
     }
 
     let jumlahDicatat = 0;
+    let siswaSudahAbsen = [];
+
     for (const item of absensiData) {
+      // Cek apakah sudah absen
       const [existing] = await db.query(`
-        SELECT 1 FROM absensi 
-        WHERE jadwal_id = ? AND krs_id = ? AND DATE(tanggal) = CURDATE()
+        SELECT s.nama_siswa FROM absensi a
+        JOIN krs k ON a.krs_id = k.krs_id
+        JOIN siswa s ON k.siswa_nis = s.nis
+        WHERE a.jadwal_id = ? AND a.krs_id = ? AND DATE(a.tanggal) = CURDATE()
       `, [jadwal_id, item.krs_id]);
 
-      if (existing.length === 0) {
-        await db.query(`
-          INSERT INTO absensi (
-            absensi_id,
-            jadwal_id,
-            krs_id,
-            guru_nip,
-            keterangan,
-            tanggal,
-            uraian,
-            surat,
-            created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `, [
-          uuidv4(),
-          jadwal_id,
-          item.krs_id,
-          guru_nip,
-          item.keterangan,
-          tanggal,
-          item.uraian || '',
-          null,
-          new Date()
-        ]);
-        jumlahDicatat++;
+      if (existing.length > 0) {
+        siswaSudahAbsen.push(existing[0].nama_siswa);
+        continue;
       }
+
+      // Insert absensi
+      await db.query(`
+        INSERT INTO absensi (
+          absensi_id,
+          jadwal_id,
+          krs_id,
+          guru_nip,
+          keterangan,
+          tanggal,
+          uraian,
+          surat,
+          created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [
+        uuidv4(),
+        jadwal_id,
+        item.krs_id,
+        guru_nip,
+        item.keterangan,
+        tanggal,
+        item.uraian || '',
+        null,
+        new Date()
+      ]);
+      jumlahDicatat++;
     }
 
-    res.status(201).json({
+    //Jika semua siswa sudah diabsen
+    if (jumlahDicatat === 0) {
+      return res.status(400).json({
+        success: true,
+        message: 'Siswa sudah diabsen hari ini',
+        siswa_sudah_absen: siswaSudahAbsen,
+        jumlah_dicatat: 0
+      });
+    }
+
+    //Jika ada yang berhasil dicatat
+    return res.status(201).json({
       success: true,
-      message: jumlahDicatat > 0
-        ? 'Absensi berhasil dicatat'
-        : 'Siswa sudah diabsen hari ini',
+      message: 'Absensi berhasil dicatat',
       jumlah_dicatat: jumlahDicatat
     });
 
   } catch (error) {
     console.error('Error createAbsensiSiswa:', error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: 'Gagal mencatat absensi',
       error: error.message
     });
   }
 };
+
 
 
 const getBerita = async (req, res) => {
